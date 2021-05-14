@@ -111,11 +111,14 @@ __global__ void get_dmap_from_index_map(float *depth_map, int *height_array, int
     float right_corres_point_offset_range = (width / 128) * area_scale;
     bool check_outliers = true;
 
-    int h = threadIdx.x + blockIdx.x*blockDim.x;  //current_line
+    int h = blockIdx.x;  //current_line
+    int thread_working_length = width / blockDim.x;
+    int w_start = threadIdx.x * thread_working_length;
+    int w_end = w_start + thread_working_length;
     float *line_r = img_index_right + h * width;
     float *line_l = img_index_left + h * width;
     int last_right_corres_point = -1;
-    for (int w = 0; w < width; w++) {
+    for (int w = w_start; w < w_end; w++) {
         if (isnan(line_l[w])) {
             last_right_corres_point = -1;
             continue;
@@ -160,6 +163,8 @@ __global__ void get_dmap_from_index_map(float *depth_map, int *height_array, int
             }
         }
         if (cnt_l == 0 & cnt_r == 0) continue;
+        if (most_corres_pts_l==-1) most_corres_pts_l = most_corres_pts_r;
+        else if (most_corres_pts_r==-1) most_corres_pts_r = most_corres_pts_l;
         // get the interpo right index 'w_r'
         float w_r = 0;
         float left_pos = line_r[most_corres_pts_l], right_pos = line_r[most_corres_pts_r];

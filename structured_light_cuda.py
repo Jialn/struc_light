@@ -72,10 +72,10 @@ def get_dmap_from_index_map_cuda_wrapper(depth_map, height, width, img_index_lef
         drv.In(np.array(baseline).astype(np.float32)),drv.In(np.array(dmap_base).astype(np.float32)),drv.In(np.array(fx).astype(np.float32)),
         drv.In(img_index_left_sub_px),drv.In(img_index_right_sub_px),drv.In(belief_map_left),drv.In(belief_map_right), 
         drv.In(np.array(roughly_projector_area_in_image).astype(np.float32)),
-        block=(1, 1, 1), grid=(height, 1))
+        block=(96, 1, 1), grid=(height, 1))
 
 # for pycuda test
-# h, w = 2596, 2048
+# h, w = 2048, 2592
 # a = np.random.randn(h, w).astype(np.float32)
 # b = np.random.randn(h, w).astype(np.float32)
 # c = np.random.randn(h, w).astype(np.float32)
