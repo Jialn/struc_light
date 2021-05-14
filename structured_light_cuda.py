@@ -31,7 +31,7 @@ roughly_projector_area_in_image = 0.8  # the roughly prjector area in image / im
 phsift_pattern_period_per_pixel = 10.0  # normalize the index. porjected pattern res width is 1280; 7 graycode pattern = 2^7 = 128 phase shift periods; 1290/128=10 
 default_image_seq_start_index = 24  # in some datasets, (0, 24) are for pure gray code solutions 
 
-use_parallel_computing = True
+use_parallel_computing = False
 save_mid_res_for_visulize = False
 visulize_res = True
 

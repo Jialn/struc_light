@@ -1,7 +1,7 @@
 # struc_light
 
 ## Installation
-Tested on ubuntu18.04 + python3.6 and win10 + python3.8.
+Tested on ubuntu18.04 + python3.6 + cuda10.2 and win10 + python3.8 + cuda11
 
   ```
   pip3 install numpy opencv-python numba open3d pycuda

@@ -55,7 +55,7 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
     if((phase_sub_index == 0) && (phase > pi*1.5))  phase -= 2.0*pi; 
     if((phase_sub_index == 1) && (phase < pi*0.5))  phase += 2.0*pi; 
     img_phase[idx] = phase_main_index * phsift_pattern_period_per_pixel + (phase * phsift_pattern_period_per_pixel / (2*pi));
-    img_index[idx] = not need_outliers_checking_flag;  //reuse img_index as belief map
+    img_index[idx] = ! need_outliers_checking_flag;  //reuse img_index as belief map
 }
 
 __global__ void depth_filter(float *depth_map, float *depth_map_raw, int *height_array, int *width_array, float *camera_kp, float *depth_filter_max_distance, int *depth_filter_minmum_points_in_checking_range)
@@ -177,12 +177,12 @@ __global__ void get_dmap_from_index_map(float *depth_map, int *height_array, int
         else                    w_r = right_value;
         // check possiblely outliers using max_allow_pixel_per_index and belief_map
         bool outliers_flag = false;
-        if (check_outliers==true & belief_map_r[h*width+(int)round(w_r)]==0) {
+        if (check_outliers==true & belief_map_r[h*width+(int)(w_r+0.5)]==0) {
             if (abs((float)(most_corres_pts_l-w_r)) > max_allow_pixel_per_index) outliers_flag = true;
             if (abs((float)(most_corres_pts_r-w_r)) > max_allow_pixel_per_index) outliers_flag = true;
         }
         if (outliers_flag==true) continue;
-        last_right_corres_point = round(w_r);
+        last_right_corres_point = (int)(w_r+0.5);
         // get left index
         float w_l = img_index_left_sub_px[curr_pix_idx];
         // check possiblely left outliers
