@@ -75,7 +75,7 @@ def rectify_phase(img_phase, rectify_map_x, rectify_map_y, height, width, rectif
             rectified_img_phase[h,w] = img_phase[round(src_y), round(src_x)]
 
 @numba.jit  ((numba.float64[:,:], numba.int64,numba.int64, numba.float32[:,:],numba.float32[:,:], numba.float64,numba.float64,numba.float64), nopython=True, parallel=False, nogil=True, cache=True)
-def get_dmap_from_index_map(depth_map, height,width, img_index_left,img_index_right, baseline,dmap_base,fx):
+def gen_depth_from_index_matching(depth_map, height,width, img_index_left,img_index_right, baseline,dmap_base,fx):
     max_index_offset_when_matching = 1.3 * (1280.0 / width)  # typical condition: a lttle larger than 2.0 for 640, 1.0 for 1280, 0.5 for 2560
     right_corres_point_offset_range = (width // 128)
     for h in prange(height):
@@ -123,11 +123,8 @@ def get_image_index(image_path, appendix, rectifier):
     unvalid_thres = gray_decoding_unvalid_thres
     start_time = time.time()
     ### read projector fully open and fully close images
-    for i in range(24, 26):
-        fname = image_path + str(i) + appendix
-        img = cv2.imread(fname, cv2.IMREAD_UNCHANGED)
-        if i % 2 == 0: prj_area_posi = img
-        else: prj_area_nega = img
+    prj_area_posi = cv2.imread(image_path + str(24) + appendix, cv2.IMREAD_UNCHANGED)
+    prj_area_nega = cv2.imread(image_path + str(25) + appendix, cv2.IMREAD_UNCHANGED)
     prj_valid_map = prj_area_posi - prj_area_nega
     _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)  # only to build the internal LUT map
     posi_neg_pattern_avg_thres = (prj_area_posi//2 + prj_area_nega//2)
@@ -185,7 +182,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None):
     ### Infer DepthMap from Decoded Index
     depth_map = np.zeros_like(img_index_left, dtype=np.float)
     start_time = time.time()
-    get_dmap_from_index_map(depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx)
+    gen_depth_from_index_matching(depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx)
     print("depth map generating from index %.3f s" % (time.time() - start_time))
     print("Total pipeline time: %.3f s" % (time.time() - pipe_start_time))
 

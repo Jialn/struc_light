@@ -10,13 +10,13 @@ import numba
 from numba import prange
 from stereo_rectify import StereoRectify
 
-### parameters for the program
+### parameters
 phase_decoding_unvalid_thres = 5  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
                                   # e.g., 1, 2, 5 for low-expo real captured images; 20, 30, 40 for normal expo rendered images.
 remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
-depth_filter_max_distance = 0.005  # about 5-7 times of resolution per pxiel
+depth_filter_max_distance = 0.005 # about 5-7 times of resolution per pxiel
 depth_filter_minmum_points_in_checking_range = 2  # including the point itsself, will also add a ratio of width // 400
 use_depth_avg_filter = True
 depth_avg_filter_max_length = 2   # 4, from 0 - 6
@@ -118,7 +118,7 @@ def rectify_belief_map(img, rectify_map_x, rectify_map_y, height, width, rectifi
             rectified_img[h,w] = img[round(src_y), round(src_x)]
 
 @numba.jit  ((numba.float32[:,:], numba.int64,numba.int64, numba.float32[:,:],numba.float32[:,:], numba.float32,numba.float32,numba.float32, numba.float32[:,:],numba.float32[:,:],numba.int16[:,:], numba.int16[:,:] ), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
-def get_dmap_from_index_map(depth_map, height,width, img_index_left,img_index_right, baseline,dmap_base,fx, img_index_left_sub_px,img_index_right_sub_px, belief_map_l, belief_map_r):
+def gen_depth_from_index_matching(depth_map, height,width, img_index_left,img_index_right, baseline,dmap_base,fx, img_index_left_sub_px,img_index_right_sub_px, belief_map_l, belief_map_r):
     area_scale = 1.333 * roughly_projector_area_in_image
     max_allow_pixel_per_index = 1.25 + area_scale * width / 1280.0
     max_index_offset_when_matching = 1.3 * (1280.0 / width)  # typical condition: a lttle larger than 2.0 for 640, 1.0 for 1280, 0.5 for 2560
@@ -300,33 +300,29 @@ def depth_avg_filter(depth_map, height, width):
 
 
 ### the index decoding part
-def get_image_index(image_path, appendix, rectifier, res_path=None, images=None):
+global_reading_img_time = 0
+img_phase = None # will be faster as global variable(will not free mem every call)
+img_index = None
+
+def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, images=None):
+    global global_reading_img_time, img_phase, img_index
     unvalid_thres = 0
     save_mid_res = save_mid_res_for_visulize
     image_seq_start_index = default_image_seq_start_index
     start_time = time.time()
-    ### read projector fully open and fully close images
-    if images is None:  # images is not provided, read images using image path
-        images_posi = []
-        images_nega = []
+    if images is None:
         fname = image_path + str(image_seq_start_index) + appendix
         if not os.path.exists(fname): image_seq_start_index = 0
-        for i in range(image_seq_start_index, image_seq_start_index+2):
-            fname = image_path + str(i) + appendix
-            img = cv2.imread(fname, cv2.IMREAD_UNCHANGED)
-            if i % 2 == 0: prj_area_posi = img
-            else: prj_area_nega = img
-        prj_valid_map = prj_area_posi - prj_area_nega
-        if rectifier.remap_x_left_scaled is None: _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)  # only to build the internal LUT map
-        posi_neg_pattern_avg_thres = (prj_area_posi//2 + prj_area_nega//2)
-        thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, unvalid_thres, 255, cv2.THRESH_BINARY)
+        ### read projector fully open and fully close images
+        prj_area_posi = cv2.imread(image_path + str(image_seq_start_index) + appendix, cv2.IMREAD_UNCHANGED)
+        prj_area_nega = cv2.imread(image_path + str(image_seq_start_index+1) + appendix, cv2.IMREAD_UNCHANGED)
         ### read gray code and phase shift images
+        images_graycode = []
         for i in range(image_seq_start_index+2, image_seq_start_index+10):  # (0, 24) for pure gray code solutions in dataset
             fname = image_path + str(i) + appendix
             if not os.path.exists(fname): break
             img = cv2.imread(fname, cv2.IMREAD_UNCHANGED)
-            images_posi.append(img)
-        images_nega = posi_neg_pattern_avg_thres
+            images_graycode.append(img)
         images_phsft = []
         for i in range(image_seq_start_index+10, image_seq_start_index+14):  # phase shift patern 
             fname = image_path + str(i) + appendix
@@ -335,43 +331,46 @@ def get_image_index(image_path, appendix, rectifier, res_path=None, images=None)
             images_phsft.append(img)
     else:
         prj_area_posi, prj_area_nega = images[image_seq_start_index], images[image_seq_start_index+1]
-        prj_valid_map = prj_area_posi - prj_area_nega
-        if rectifier.remap_x_left_scaled is None: _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)  # only to build the internal LUT map
-        posi_neg_pattern_avg_thres = (prj_area_posi//2 + prj_area_nega//2)
-        thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, unvalid_thres, 255, cv2.THRESH_BINARY)
-        ### read gray code and phase shift images
-        images_posi = images[image_seq_start_index+2:image_seq_start_index+10] # gray code posi images
-        images_nega = posi_neg_pattern_avg_thres  # gray code thres
+        images_graycode = images[image_seq_start_index+2:image_seq_start_index+10] # gray code posi images
         images_phsft = images[image_seq_start_index+10:image_seq_start_index+14] # phase shift images
-    print("read images and build rectify map using %.3f s" % (time.time() - start_time))
+    prj_valid_map = prj_area_posi - prj_area_nega
+    if rectifier.remap_x_left_scaled is None: _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)  # to build the internal LUT map
+    thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, unvalid_thres, 255, cv2.THRESH_BINARY)
+    if img_phase is None:
+        img_phase = np.empty_like(prj_valid_map, dtype=np.float32)
+        img_index = np.empty_like(img_phase, dtype=np.int16)
+    # print("read images and rectfy map: %.3f s" % (time.time() - start_time))
+    global_reading_img_time += (time.time() - start_time)
     ### decoding
-    height, width = images_posi[0].shape[:2]
-    img_index, src_imgs = np.zeros_like(images_posi[0], dtype=np.int16), np.array(images_posi)
     start_time = time.time()
-    gray_decode(src_imgs, images_nega, prj_valid_map_bin, len(images_posi), height,width, img_index, unvalid_thres)
-    print("gray code index decoding using %.3f s" % (time.time() - start_time))
+    src_imgs = np.array(images_graycode)
+    images_phsft_src = np.array(images_phsft)
+    rectified_img_phase = np.empty_like(img_phase, dtype=np.float32)
+    rectified_belief_map = np.empty_like(img_phase, dtype=np.int16)
+    sub_pixel_map = np.empty_like(img_phase, dtype=np.float32)
+    height, width = images_graycode[0].shape[:2]
+    print("build ndarrays for decoding: %.3f s" % (time.time() - start_time))
+    
+    start_time = time.time()
+    gray_decode(src_imgs, prj_area_posi//2 + prj_area_nega//2, prj_valid_map_bin, len(images_graycode), height,width, img_index, unvalid_thres)
+    print("gray code decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res and res_path is not None:
         mid_res_corse_gray_index_raw = img_index // 2
         mid_res_corse_gray_index = np.clip(mid_res_corse_gray_index_raw * 80 % 255, 0, 255).astype(np.uint8)
         cv2.imwrite(res_path + "/mid_res_corse_gray_index" + appendix, mid_res_corse_gray_index)
-
-    img_phase = np.zeros_like(images_posi[0], dtype=np.float32)
-    images_phsft_src = np.array(images_phsft)
+  
     start_time = time.time()
     phase_shift_decode(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres)
-    belief_map = img_index
-    # rectify image, accroding to left or right
+    belief_map = img_index # img_index reused as belief_map when phase_shift_decoding
+    print("phase decoding: %.3f s" % (time.time() - start_time))
+    
+    start_time = time.time()
+    ### rectify the decoding res, accroding to left or right
     if appendix == '_l.bmp': rectify_map_x, rectify_map_y, camera_kd = rectifier.remap_x_left_scaled, rectifier.remap_y_left_scaled, rectifier.rectified_camera_kd_l
     else: rectify_map_x, rectify_map_y, camera_kd = rectifier.remap_x_right_scaled, rectifier.remap_y_right_scaled, rectifier.rectified_camera_kd_r
-
-    rectified_img_phase = np.zeros_like(img_phase, dtype=np.float32)
-    rectified_belief_map = np.zeros_like(img_phase, dtype=np.int16)
-    sub_pixel_map = np.zeros_like(img_phase, dtype=np.float32)
     rectify_belief_map(belief_map, rectify_map_x, rectify_map_y, height,width, rectified_belief_map)
     rectify_phase(img_phase, rectify_map_x, rectify_map_y, height,width, rectified_img_phase, sub_pixel_map)
-    print("phase decoding and rectify using %.3f s" % (time.time() - start_time))
-    # cv2.imwrite("./img_phase"+appendix+".png", img_phase.astype(np.uint8))
-    # cv2.imwrite("./img_phase"+appendix+"_rectified.png", rectified_img_phase.astype(np.uint8))
+    print("rectify: %.3f s" % (time.time() - start_time))
 
     if save_mid_res:
         mid_res_wrapped_phase = (img_phase - mid_res_corse_gray_index_raw * phsift_pattern_period_per_pixel) / phsift_pattern_period_per_pixel
@@ -382,16 +381,15 @@ def get_image_index(image_path, appendix, rectifier, res_path=None, images=None)
 
 
 def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
+    global global_reading_img_time
     if rectifier is None: rectifier = StereoRectify(scale=1.0, cali_file=pattern_path+'calib.yml')
     if images is not None: images_left, images_right = images[0], images[1]
     else: images_left, images_right = None, None
-
-    ### Rectify and Decode to index
+    ### Rectify and Decode 
     pipe_start_time = start_time = time.time()
-    belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = get_image_index(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left)
-    belief_map_right, img_index_right, camera_kd_r, img_index_right_sub_px = get_image_index(pattern_path, '_r.bmp', rectifier=rectifier, res_path=res_path, images=images_right)
-    print("read image and index decoding in total using %.3f s" % (time.time() - start_time))
-
+    belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = index_decoding_from_images(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left)
+    belief_map_right, img_index_right, camera_kd_r, img_index_right_sub_px = index_decoding_from_images(pattern_path, '_r.bmp', rectifier=rectifier, res_path=res_path, images=images_right)
+    print("- Read image and decoding in total: %.3f s" % (time.time() - start_time))
     # get camera parameters
     fx = camera_kd_l[0][0]
     cx, cx_r = camera_kd_l[0][2], camera_kd_r[0][2]
@@ -399,26 +397,27 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     cam_transform = np.array(rectifier.T)[:,0]
     height, width = img_index_left.shape[:2]
     baseline = np.linalg.norm(cam_transform)  # * ( 0.8/(0.8+0.05*0.001) )  # = 0.9999375039060059
-
-    ### Infer DepthMap from Decoded Index
-    unoptimized_depth_map = np.zeros_like(img_index_left, dtype=np.float32)
-    depth_map = np.zeros_like(img_index_left, dtype=np.float32)
+    ### Infer DepthMap from Index Matching
+    unoptimized_depth_map = np.empty_like(img_index_left, dtype=np.float32)
+    depth_map = np.empty_like(img_index_left, dtype=np.float32)
     start_time = time.time()
-    get_dmap_from_index_map(unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right)
+    gen_depth_from_index_matching(unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right)
+    print("index matching and depth map generating: %.3f s" % (time.time() - start_time))
+    start_time = time.time()
     optimize_dmap_using_sub_pixel_map(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px)
-    print("depth map generating from index %.3f s" % (time.time() - start_time))
-
+    print("subpix optimize: %.3f s" % (time.time() - start_time))
     ### Run Depth Map Filter
     depth_map_raw = depth_map.copy()  # save raw depth map
     start_time = time.time()
     depth_filter(depth_map, depth_map_raw, height, width, camera_kd_l.astype(np.float32))
-    print("flying point filter %.3f s" % (time.time() - start_time))
+    print("flying point filter: %.3f s" % (time.time() - start_time))
     if use_depth_avg_filter:
         start_time = time.time()
         depth_avg_filter(depth_map, height, width)
-        print("depth avg filter %.3f s" % (time.time() - start_time))
-    print("Total pipeline time: %.3f s" % (time.time() - pipe_start_time))
-    
+        print("depth avg filter: %.3f s" % (time.time() - start_time))
+    print("- Total time: %.3f s" % (time.time() - pipe_start_time))
+    print("- Total time except reading imgs: %.3f s" % (time.time() - pipe_start_time - global_reading_img_time))
+    global_reading_img_time = 0
     ### Save Mid Results for visualizing
     if save_mid_res_for_visulize:   
         depth_map_uint16 = depth_map * 30000
@@ -433,15 +432,8 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
         cv2.imwrite(res_path + "/belief_map_right.png", belief_map_right)
         cv2.imwrite(res_path + "/ph_correspondence_l.png", images_phsft_left_v)
         cv2.imwrite(res_path + "/ph_correspondence_r.png", images_phsft_right_v)
-        # plt.subplot(1, 2, 1)
-        # plt.imshow(ph_correspondence_l)
-        # plt.subplot(1, 2, 2)
-        # plt.imshow(ph_correspondence_r)
-        # plt.show()
-
     ### Prepare results
     depth_map_mm = depth_map * 1000
-
     global default_image_seq_start_index
     if images is None:
         fname = pattern_path + str(default_image_seq_start_index) + "_l.bmp"
@@ -458,9 +450,6 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
 #   linux: python structured_light.py pattern_examples/struli_test1/
 if __name__ == "__main__":
     import sys
-    import glob
-    import shutil
-    import matplotlib.pyplot as plt
 
     if len(sys.argv) <= 1:
         print("run with args 'pattern_path'")
@@ -470,20 +459,6 @@ if __name__ == "__main__":
     res_path = image_path + r'\res' if sys.platform == 'win32' else image_path + '/res'
     if not os.path.exists(res_path): os.system("mkdir " + res_path)
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path)
-
-    ### build point cloud
-    import open3d as o3d
-    rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
-        o3d.geometry.Image(gray.astype(np.uint8)),
-        o3d.geometry.Image(depth_map_mm.astype(np.float32)),
-        depth_scale=1.0,
-        depth_trunc=6000.0)
-    h, w = gray.shape[:2]
-    fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
-    pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx, cy))
-    # save point cloud
-    o3d.io.write_point_cloud(res_path + "/points.ply", pcd, write_ascii=False, compressed=False)
-    print("res saved to:" + res_path)
     
     def report_depth_error(depth_img, depth_gt):
         gray_img = cv2.imread(image_path + str(default_image_seq_start_index) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
@@ -495,27 +470,17 @@ if __name__ == "__main__":
 
         pxiel_num = depth_img.shape[0]*depth_img.shape[1]
         valid_points_num, valid_points_gt_num = len(valid_points[0]), len(projector_area[0])
-        print("total pixel: " + str(pxiel_num))
-        print("valid points rate: " + str(valid_points_num) + "/" + str(valid_points_gt_num) + ", " + str(100*valid_points_num/valid_points_gt_num)+"%")
-        print("average_drift(mm):" + str(np.average(error_img)))
-        print("average_error(mm):" + str(np.average(abs(error_img))))
-        # error below 10.0mm
+        # # error below 10.0mm
         error_img = error_img[np.where((error_img<10.0)&(error_img>-10.0))]
         print("valid points rate below 10mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
-        print("average_drift(mm):" + str(np.average(error_img)))
         print("average_error(mm):" + str(np.average(abs(error_img))))
-        print("diff image:")
         # error below 1.0mm
         error_img = error_img[np.where((error_img<1.0)&(error_img>-1.0))]
-        print(error_img.shape[0])
         print("valid points rate below 1mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
-        print("average_drift(mm):" + str(np.average(error_img)))
         print("average_error(mm):" + str(np.average(abs(error_img))))
         # error below 0.25mm
         error_img = error_img[np.where((error_img<0.25)&(error_img>-0.25))]
-        print(error_img.shape[0])
         print("valid points rate below 0.25mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
-        print("average_drift(mm):" + str(np.average(error_img)))
         print("average_error(mm):" + str(np.average(abs(error_img))))
 
         # write error map
@@ -537,8 +502,20 @@ if __name__ == "__main__":
         gt_depth_rectified = rectifier.rectify_image(gt_depth) #, interpolation=cv2.INTER_NEAREST
         report_depth_error(depth_map_mm, gt_depth_rectified)
     
-    ### visualize
+    ### build point cloud and visualize
     if visulize_res:
+        import open3d as o3d
+        rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            o3d.geometry.Image(gray.astype(np.uint8)),
+            o3d.geometry.Image(depth_map_mm.astype(np.float32)),
+            depth_scale=1.0,
+            depth_trunc=6000.0)
+        h, w = gray.shape[:2]
+        fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
+        pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx, cy))
+        # save point cloud
+        o3d.io.write_point_cloud(res_path + "/points.ply", pcd, write_ascii=False, compressed=False)
+        print("ply res saved to:" + res_path)
         pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         pcd.translate(np.zeros(3), relative=False)
         o3d.visualization.draw(geometry=pcd, width=1600, height=900, point_size=1)
