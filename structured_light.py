@@ -117,8 +117,8 @@ def rectify_belief_map(img, rectify_map_x, rectify_map_y, height, width, rectifi
             if src_y >= height-1: src_y = height-1
             rectified_img[h,w] = img[round(src_y), round(src_x)]
 
-@numba.jit  ((numba.float32[:,:], numba.int64,numba.int64, numba.float32[:,:],numba.float32[:,:], numba.float32,numba.float32,numba.float32, numba.float32[:,:],numba.float32[:,:],numba.int16[:,:] ), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
-def get_dmap_from_index_map(depth_map, height,width, img_index_left,img_index_right, baseline,dmap_base,fx, img_index_left_sub_px,img_index_right_sub_px, belief_map_l):
+@numba.jit  ((numba.float32[:,:], numba.int64,numba.int64, numba.float32[:,:],numba.float32[:,:], numba.float32,numba.float32,numba.float32, numba.float32[:,:],numba.float32[:,:],numba.int16[:,:], numba.int16[:,:] ), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
+def get_dmap_from_index_map(depth_map, height,width, img_index_left,img_index_right, baseline,dmap_base,fx, img_index_left_sub_px,img_index_right_sub_px, belief_map_l, belief_map_r):
     area_scale = 1.333 * roughly_projector_area_in_image
     max_allow_pixel_per_index = 1.25 + area_scale * width / 1280.0
     max_index_offset_when_matching = 1.3 * (1280.0 / width)  # typical condition: a lttle larger than 2.0 for 640, 1.0 for 1280, 0.5 for 2560
@@ -128,8 +128,6 @@ def get_dmap_from_index_map(depth_map, height,width, img_index_left,img_index_ri
     for h in prange(height):
         line_r = img_index_right[h,:]
         line_l = img_index_left[h,:]
-        possible_points_l = np.zeros(width, dtype=np.int64)
-        possible_points_r = np.zeros(width, dtype=np.int64)
         last_right_corres_point = -1
         for w in range(width):
             if np.isnan(line_l[w]):   # unvalid
@@ -137,6 +135,7 @@ def get_dmap_from_index_map(depth_map, height,width, img_index_left,img_index_ri
                 continue
             ## find the possible corresponding points in right image
             cnt_l, cnt_r = 0, 0
+            most_corres_pts_l, most_corres_pts_r = -1, -1
             if last_right_corres_point > 0:
                 checking_left_edge = last_right_corres_point - right_corres_point_offset_range
                 checking_right_edge = last_right_corres_point + right_corres_point_offset_range
@@ -145,32 +144,29 @@ def get_dmap_from_index_map(depth_map, height,width, img_index_left,img_index_ri
             else:
                 checking_left_edge, checking_right_edge = 0, width
             for i in range(checking_left_edge, checking_right_edge):
+                if np.isnan(line_r[i]): continue
                 if line_l[w]-max_index_offset_when_matching <= line_r[i] <= line_l[w]:
-                    possible_points_l[cnt_l] = i
+                    if most_corres_pts_l == -1: most_corres_pts_l = i
+                    elif line_l[w] - line_r[i] <= line_l[w] - line_r[most_corres_pts_l]: most_corres_pts_l = i
                     cnt_l += 1
                 if line_l[w] <= line_r[i] <= line_l[w]+max_index_offset_when_matching:
-                    possible_points_r[cnt_r] = i
+                    if most_corres_pts_r == -1: most_corres_pts_r = i
+                    elif line_r[i] - line_l[w] <= line_r[most_corres_pts_r] - line_l[w]: most_corres_pts_r = i
                     cnt_r += 1
             if cnt_l == 0 and cnt_r == 0:  # expand the searching range and try again
                 for i in range(width):
+                    if np.isnan(line_r[i]): continue
                     if line_l[w]-max_index_offset_when_matching_ex <= line_r[i] <= line_l[w]:
-                        possible_points_l[cnt_l] = i
+                        if most_corres_pts_l == -1: most_corres_pts_l = i
+                        elif line_l[w] - line_r[i] <= line_l[w] - line_r[most_corres_pts_l]: most_corres_pts_l = i
                         cnt_l += 1
                     if line_l[w] <= line_r[i] <= line_l[w]+max_index_offset_when_matching_ex:
-                        possible_points_r[cnt_r] = i
+                        if most_corres_pts_r == -1: most_corres_pts_r = i
+                        elif line_r[i] - line_l[w] <= line_r[most_corres_pts_r] - line_l[w]: most_corres_pts_r = i
                         cnt_r += 1
             if cnt_l == 0 and cnt_r == 0: continue
-            ## find the nearest right index 'w_r' in 'possible_points'
-            most_corres_pts_l = possible_points_l[0]
-            most_corres_pts_r = possible_points_r[0]
-            for i in range(cnt_l): 
-                p = possible_points_l[i]
-                if abs(line_r[p] - line_l[w]) <= abs(line_r[most_corres_pts_l] - line_l[w]):
-                    most_corres_pts_l = p
-            for i in range(cnt_r): 
-                p = possible_points_r[i]
-                if abs(line_r[p] - line_l[w]) <= abs(line_r[most_corres_pts_r] - line_l[w]):
-                    most_corres_pts_r = p
+            if most_corres_pts_l == -1: most_corres_pts_l = most_corres_pts_r
+            elif most_corres_pts_r == -1: most_corres_pts_r = most_corres_pts_l
             left_pos, right_pos = line_r[most_corres_pts_l], line_r[most_corres_pts_r]
             left_value, right_value = img_index_right_sub_px[h, most_corres_pts_l], img_index_right_sub_px[h, most_corres_pts_r]
             if cnt_l != 0 and cnt_r != 0:
@@ -184,13 +180,9 @@ def get_dmap_from_index_map(depth_map, height,width, img_index_left,img_index_ri
                 w_r = right_value
             # check possiblely outliers using max_allow_pixel_per_index and belief_map
             outliers_flag = False
-            if check_outliers:
-                for i in range(cnt_l): 
-                    p = possible_points_l[i]
-                    if abs(p-w_r) >= max_allow_pixel_per_index: outliers_flag = True
-                for i in range(cnt_r): 
-                    p = possible_points_r[i]
-                    if abs(p-w_r) >= max_allow_pixel_per_index: outliers_flag = True
+            if check_outliers and belief_map_r[h,round(w_r)]==0:
+                if abs(most_corres_pts_l-w_r) >= max_allow_pixel_per_index: outliers_flag = True
+                if abs(most_corres_pts_r-w_r) >= max_allow_pixel_per_index: outliers_flag = True
             if outliers_flag: continue
             last_right_corres_point = round(w_r)
             # get left index
