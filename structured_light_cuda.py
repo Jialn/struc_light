@@ -1,4 +1,3 @@
-
 """
 Description:
 This program implements the structured light pipeline with graycode and phase shift pattern.
@@ -12,13 +11,13 @@ import pycuda.driver as drv
 from pycuda.compiler import SourceModule
 from stereo_rectify import StereoRectify
 
-### parameters for the program
+### parameters 
 phase_decoding_unvalid_thres = 5  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
                                   # e.g., 1, 2, 5 for low-expo real captured images; 20, 30, 40 for normal expo rendered images.
 remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
-depth_filter_max_distance = 0.005  # about 5-7 times of resolution per pxiel
+depth_filter_max_distance = 0.005 # about 5-7 times of resolution per pxiel
 depth_filter_minmum_points_in_checking_range = 2  # including the point itsself, will also add a ratio of width // 400
 use_depth_avg_filter = True
 depth_avg_filter_max_length = 2   # 4, from 0 - 6
@@ -31,95 +30,92 @@ default_image_seq_start_index = 24  # in some datasets, (0, 24) are for pure gra
 save_mid_res_for_visulize = False
 visulize_res = False
 
-### read adn compile cu file
+
+### read and compile cu file
 dir_path = os.path.dirname(os.path.realpath(__file__))  # dir of this file
 with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
     cuda_src_string = f.read()
 cuda_module = SourceModule(cuda_src_string)
 
-gray_decode_cuda = cuda_module.get_function("gray_decode")
-phase_shift_decode_cuda = cuda_module.get_function("phase_shift_decode")
-depth_filter_cuda = cuda_module.get_function("depth_filter")
-get_dmap_from_index_map_cuda = cuda_module.get_function("get_dmap_from_index_map")
-rectify_phase_and_belief_map_cuda = cuda_module.get_function("rectify_phase_and_belief_map")
-depth_avg_filter_cuda = cuda_module.get_function("depth_avg_filter")
-optimize_dmap_using_sub_pixel_map_cuda = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
+gray_decode_cuda_kernel = cuda_module.get_function("gray_decode")
+phase_shift_decode_cuda_kernel = cuda_module.get_function("phase_shift_decode")
+depth_filter_cuda_kernel = cuda_module.get_function("depth_filter")
+gen_depth_from_index_matching_cuda_kernel = cuda_module.get_function("gen_depth_from_index_matching")
+rectify_phase_and_belief_map_cuda_kernel = cuda_module.get_function("rectify_phase_and_belief_map")
+depth_avg_filter_cuda_kernel = cuda_module.get_function("depth_avg_filter")
+optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
 
-def gray_decode_cuda_wrapper(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map_bin, image_num, height,width, img_index, unvalid_thres):
-    gray_decode_cuda(drv.In(src_imgs), drv.In(avg_thres_posi), drv.In(avg_thres_nega), drv.In(prj_valid_map_bin),
+def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map_bin, image_num, height,width, img_index, unvalid_thres):
+    gray_decode_cuda_kernel(drv.In(src_imgs), drv.In(avg_thres_posi), drv.In(avg_thres_nega), drv.In(prj_valid_map_bin),
         drv.In(np.array(image_num).astype(np.int32)),drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
         drv.Out(img_index),drv.In(np.array(unvalid_thres).astype(np.int32)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def phase_shift_decode_cuda_wrapper(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres):
-    phase_shift_decode_cuda(drv.In(images_phsft_src),
+def phase_shift_decode_cuda(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres):
+    phase_shift_decode_cuda_kernel(drv.In(images_phsft_src),
         drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
-        drv.Out(img_phase),drv.InOut(img_index),drv.In(np.array(phase_decoding_unvalid_thres).astype(np.int32)),
+        drv.Out(img_phase),drv.InOut(img_index),drv.In(np.array(phase_decoding_unvalid_thres).astype(np.int32)),drv.In(np.array(phsift_pattern_period_per_pixel).astype(np.float32)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def depth_filter_cuda_wrapper(depth_map, depth_map_raw, height, width, camera_kd_l):
-    depth_filter_cuda(drv.InOut(depth_map),drv.In(depth_map_raw),
+def depth_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd_l):
+    depth_filter_cuda_kernel(drv.InOut(depth_map),drv.In(depth_map_raw),
         drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
         drv.In(camera_kd_l), drv.In(np.array(depth_filter_max_distance).astype(np.float32)), drv.In(np.array(depth_filter_minmum_points_in_checking_range).astype(np.int32)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def get_dmap_from_index_map_cuda_wrapper(depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right):
-    get_dmap_from_index_map_cuda(drv.Out(depth_map),
+def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right):
+    gen_depth_from_index_matching_cuda_kernel(drv.Out(depth_map),
         drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
         drv.In(img_index_left),drv.In(img_index_right), 
         drv.In(np.array(baseline).astype(np.float32)),drv.In(np.array(dmap_base).astype(np.float32)),drv.In(np.array(fx).astype(np.float32)),
         drv.In(img_index_left_sub_px),drv.In(img_index_right_sub_px),drv.In(belief_map_left),drv.In(belief_map_right), 
-        drv.In(np.array(roughly_projector_area_in_image).astype(np.float32)),
+        drv.In(np.array(roughly_projector_area_in_image).astype(np.float32)),drv.In(np.array([depth_cutoff_near, depth_cutoff_far]).astype(np.float32)),
         block=(96, 1, 1), grid=(height, 1))
 
-def rectify_phase_and_belief_map_cuda_wrapper(img_phase, belief_map, rectify_map_x, rectify_map_y, height,width, rectified_img_phase, rectified_belief_map, sub_pixel_map):
-    rectify_phase_and_belief_map_cuda(drv.In(img_phase),drv.In(belief_map),drv.In(rectify_map_x),drv.In(rectify_map_y),
+def rectify_phase_and_belief_map_cuda(img_phase, belief_map, rectify_map_x, rectify_map_y, height,width, rectified_img_phase, rectified_belief_map, sub_pixel_map):
+    rectify_phase_and_belief_map_cuda_kernel(drv.In(img_phase),drv.In(belief_map),drv.In(rectify_map_x),drv.In(rectify_map_y),
         drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
         drv.Out(rectified_img_phase), drv.Out(rectified_belief_map), drv.Out(sub_pixel_map), 
         drv.In(np.array(roughly_projector_area_in_image).astype(np.float32)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def depth_avg_filter_cuda_wrapper(depth_map, height, width):
-    depth_avg_filter_cuda(drv.InOut(depth_map),
+def depth_avg_filter_cuda(depth_map, height, width):
+    depth_avg_filter_cuda_kernel(drv.InOut(depth_map),
         drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
         drv.In(np.array(depth_avg_filter_max_length).astype(np.int32)),drv.In(np.array(depth_avg_filter_unvalid_thres).astype(np.float32)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def optimize_dmap_using_sub_pixel_map_cuda_wrapper(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px):
-    optimize_dmap_using_sub_pixel_map_cuda(drv.In(unoptimized_depth_map),drv.Out(depth_map),
+def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px):
+    optimize_dmap_using_sub_pixel_map_cuda_kernel(drv.In(unoptimized_depth_map),drv.Out(depth_map),
         drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
         drv.In(img_index_left_sub_px),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 
+### the index decoding part
 global_reading_img_time = 0
-img_phase = None
+img_phase = None # will be faster as global variable(will not free mem every call)
 img_index = None
 
-### the index decoding part
-def get_image_index(image_path, appendix, rectifier, res_path=None, images=None):
+def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, images=None):
     global global_reading_img_time, img_phase, img_index
     unvalid_thres = 0
     save_mid_res = save_mid_res_for_visulize
     image_seq_start_index = default_image_seq_start_index
     start_time = time.time()
-    ### read projector fully open and fully close images
     if images is None:
-        images_posi = []
-        images_nega = []
         fname = image_path + str(image_seq_start_index) + appendix
         if not os.path.exists(fname): image_seq_start_index = 0
-        for i in range(image_seq_start_index, image_seq_start_index+2):
-            fname = image_path + str(i) + appendix
-            img = cv2.imread(fname, cv2.IMREAD_UNCHANGED)
-            if i % 2 == 0: prj_area_posi = img
-            else: prj_area_nega = img
+        ### read projector fully open and fully close images
+        prj_area_posi = cv2.imread(image_path + str(image_seq_start_index) + appendix, cv2.IMREAD_UNCHANGED)
+        prj_area_nega = cv2.imread(image_path + str(image_seq_start_index+1) + appendix, cv2.IMREAD_UNCHANGED)
         ### read gray code and phase shift images
+        images_graycode = []
         for i in range(image_seq_start_index+2, image_seq_start_index+10):  # (0, 24) for pure gray code solutions in dataset
             fname = image_path + str(i) + appendix
             if not os.path.exists(fname): break
             img = cv2.imread(fname, cv2.IMREAD_UNCHANGED)
-            images_posi.append(img)
+            images_graycode.append(img)
         images_phsft = []
         for i in range(image_seq_start_index+10, image_seq_start_index+14):  # phase shift patern 
             fname = image_path + str(i) + appendix
@@ -128,32 +124,28 @@ def get_image_index(image_path, appendix, rectifier, res_path=None, images=None)
             images_phsft.append(img)
     else:
         prj_area_posi, prj_area_nega = images[image_seq_start_index], images[image_seq_start_index+1]
-        images_posi = images[image_seq_start_index+2:image_seq_start_index+10] # gray code posi images
+        images_graycode = images[image_seq_start_index+2:image_seq_start_index+10] # gray code posi images
         images_phsft = images[image_seq_start_index+10:image_seq_start_index+14] # phase shift images
     prj_valid_map = prj_area_posi - prj_area_nega
-    if rectifier.remap_x_left_scaled is None: _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)  # only to build the internal LUT map
+    if rectifier.remap_x_left_scaled is None: _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)  # to build the internal LUT map
     thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, unvalid_thres, 255, cv2.THRESH_BINARY)
     if img_phase is None:
         img_phase = np.empty_like(prj_valid_map, dtype=np.float32)
         img_index = np.empty_like(img_phase, dtype=np.int16)
     # print("read images and rectfy map: %.3f s" % (time.time() - start_time))
     global_reading_img_time += (time.time() - start_time)
-
     ### decoding
     start_time = time.time()
-    src_imgs = np.array(images_posi)
+    src_imgs = np.array(images_graycode)
     images_phsft_src = np.array(images_phsft)
     rectified_img_phase = np.empty_like(img_phase, dtype=np.float32)
     rectified_belief_map = np.empty_like(img_phase, dtype=np.int16)
     sub_pixel_map = np.empty_like(img_phase, dtype=np.float32)
+    height, width = images_graycode[0].shape[:2]
     print("build ndarrays for decoding: %.3f s" % (time.time() - start_time))
+    
     start_time = time.time()
-
-    height, width = images_posi[0].shape[:2]
-
-    # gray_decode(src_imgs, images_nega, prj_valid_map_bin, len(images_posi), height,width, img_index, unvalid_thres)
-    gray_decode_cuda_wrapper(src_imgs, prj_area_posi, prj_area_nega, prj_valid_map_bin, len(images_posi), height,width, img_index, unvalid_thres)
-
+    gray_decode_cuda(src_imgs, prj_area_posi, prj_area_nega, prj_valid_map_bin, len(images_graycode), height,width, img_index, unvalid_thres)
     print("gray code decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res and res_path is not None:
         mid_res_corse_gray_index_raw = img_index // 2
@@ -161,17 +153,15 @@ def get_image_index(image_path, appendix, rectifier, res_path=None, images=None)
         cv2.imwrite(res_path + "/mid_res_corse_gray_index" + appendix, mid_res_corse_gray_index)
   
     start_time = time.time()
-
-    # phase_shift_decode(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres)
-    phase_shift_decode_cuda_wrapper(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres)
+    phase_shift_decode_cuda(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres)
+    belief_map = img_index # img_index reused as belief_map when phase_shift_decoding
     print("phase decoding: %.3f s" % (time.time() - start_time))
     
     start_time = time.time()
-    belief_map = img_index
-    # rectify image, accroding to left or right
+    ### rectify the decoding res, accroding to left or right
     if appendix == '_l.bmp': rectify_map_x, rectify_map_y, camera_kd = rectifier.remap_x_left_scaled, rectifier.remap_y_left_scaled, rectifier.rectified_camera_kd_l
     else: rectify_map_x, rectify_map_y, camera_kd = rectifier.remap_x_right_scaled, rectifier.remap_y_right_scaled, rectifier.rectified_camera_kd_r
-    rectify_phase_and_belief_map_cuda_wrapper(img_phase, belief_map, rectify_map_x, rectify_map_y, height,width, rectified_img_phase, rectified_belief_map, sub_pixel_map)
+    rectify_phase_and_belief_map_cuda(img_phase, belief_map, rectify_map_x, rectify_map_y, height,width, rectified_img_phase, rectified_belief_map, sub_pixel_map)
     print("rectify: %.3f s" % (time.time() - start_time))
 
     if save_mid_res:
@@ -187,13 +177,11 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     if rectifier is None: rectifier = StereoRectify(scale=1.0, cali_file=pattern_path+'calib.yml')
     if images is not None: images_left, images_right = images[0], images[1]
     else: images_left, images_right = None, None
-
-    ### Rectify and Decode to index
+    ### Rectify and Decode 
     pipe_start_time = start_time = time.time()
-    belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = get_image_index(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left)
-    belief_map_right, img_index_right, camera_kd_r, img_index_right_sub_px = get_image_index(pattern_path, '_r.bmp', rectifier=rectifier, res_path=res_path, images=images_right)
+    belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = index_decoding_from_images(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left)
+    belief_map_right, img_index_right, camera_kd_r, img_index_right_sub_px = index_decoding_from_images(pattern_path, '_r.bmp', rectifier=rectifier, res_path=res_path, images=images_right)
     print("- Read image and decoding in total: %.3f s" % (time.time() - start_time))
-
     # get camera parameters
     fx = camera_kd_l[0][0]
     cx, cx_r = camera_kd_l[0][2], camera_kd_r[0][2]
@@ -201,37 +189,27 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     cam_transform = np.array(rectifier.T)[:,0]
     height, width = img_index_left.shape[:2]
     baseline = np.linalg.norm(cam_transform)  # * ( 0.8/(0.8+0.05*0.001) )  # = 0.9999375039060059
-
-    ### Infer DepthMap from Decoded Index
+    ### Infer DepthMap from Index Matching
     unoptimized_depth_map = np.empty_like(img_index_left, dtype=np.float32)
     depth_map = np.empty_like(img_index_left, dtype=np.float32)
     start_time = time.time()
-
-    get_dmap_from_index_map_cuda_wrapper(unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right)
-    
+    gen_depth_from_index_matching_cuda(unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right)
     print("index matching and depth map generating: %.3f s" % (time.time() - start_time))
     start_time = time.time()
-    optimize_dmap_using_sub_pixel_map_cuda_wrapper(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px)
-
+    optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px)
     print("subpix optimize: %.3f s" % (time.time() - start_time))
-
     ### Run Depth Map Filter
     depth_map_raw = depth_map.copy()  # save raw depth map
     start_time = time.time()
-
-    # depth_filter(depth_map, depth_map_raw, height, width, camera_kd_l.astype(np.float32))
-    depth_filter_cuda_wrapper(depth_map, depth_map_raw, height, width, camera_kd_l.astype(np.float32))
-
+    depth_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd_l.astype(np.float32))
     print("flying point filter: %.3f s" % (time.time() - start_time))
     if use_depth_avg_filter:
         start_time = time.time()
-        depth_avg_filter_cuda_wrapper(depth_map, height, width)
-
+        depth_avg_filter_cuda(depth_map, height, width)
         print("depth avg filter: %.3f s" % (time.time() - start_time))
     print("- Total time: %.3f s" % (time.time() - pipe_start_time))
     print("- Total time except reading imgs: %.3f s" % (time.time() - pipe_start_time - global_reading_img_time))
     global_reading_img_time = 0
-    
     ### Save Mid Results for visualizing
     if save_mid_res_for_visulize:   
         depth_map_uint16 = depth_map * 30000
@@ -246,7 +224,6 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
         cv2.imwrite(res_path + "/belief_map_right.png", belief_map_right)
         cv2.imwrite(res_path + "/ph_correspondence_l.png", images_phsft_left_v)
         cv2.imwrite(res_path + "/ph_correspondence_r.png", images_phsft_right_v)
-
     ### Prepare results
     depth_map_mm = depth_map * 1000
     global default_image_seq_start_index
@@ -265,9 +242,6 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
 #   linux: python structured_light_cuda.py pattern_examples/struli_test1/
 if __name__ == "__main__":
     import sys
-    import glob
-    import shutil
-    import matplotlib.pyplot as plt
 
     if len(sys.argv) <= 1:
         print("run with args 'pattern_path'")

@@ -22,9 +22,9 @@ __global__ void gray_decode(unsigned char *src, unsigned char *avg_thres_posi, u
     }
 }
 
-__global__ void phase_shift_decode(unsigned char *src, int *height, int *width, float *img_phase, short *img_index, int *unvalid_thres)
+__global__ void phase_shift_decode(unsigned char *src, int *height, int *width, float *img_phase, short *img_index, int *unvalid_thres, float *phsift_pattern_period_per_pixel_array)
 {
-    float phsift_pattern_period_per_pixel = 10.0;
+    float phsift_pattern_period_per_pixel = phsift_pattern_period_per_pixel_array[0];
     float unvalid_thres_diff = unvalid_thres[0];
     float outliers_checking_thres_diff = 4 * (1.0+unvalid_thres_diff); //above this, will skip outlier checking
     float pi = 3.14159265358979;
@@ -51,6 +51,38 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
     if((phase_sub_index == 1) && (phase < pi*0.5))  phase += 2.0*pi; 
     img_phase[idx] = phase_main_index * phsift_pattern_period_per_pixel + (phase * phsift_pattern_period_per_pixel / (2*pi));
     img_index[idx] = ! need_outliers_checking_flag;  //reuse img_index as belief map
+}
+
+__global__ void rectify_phase(float *img_phase, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, float *sub_pixel_map_x)
+{   //rectify_map is, for each pixel (u,v) in the destination (corrected and rectified) image, the corresponding coordinates in the source image (that is, in the original image from camera)
+    int height = height_array[0];
+    int width = width_array[0];
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int w = idx % width;
+    float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
+    if (src_x <= 0.0) src_x = 0.0;
+    if (src_x >= width-1) src_x = width-1;
+    if (src_y <= 0.0) src_y = 0.0;
+    if (src_y >= height-1) src_y = height-1;
+    rectified_img_phase[idx] = img_phase[int(src_y+0.5), int(src_x+0.5)];
+    sub_pixel_map_x[idx] = w + (int(src_x+0.5) - src_x);
+}
+
+__global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, short *rectified_bfmap, float *sub_pixel_map_x)
+{
+    int height = height_array[0];
+    int width = width_array[0];
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int w = idx % width;
+    float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
+    if (src_x <= 0.0) src_x = 0.0;
+    if (src_x >= width-1) src_x = width-1;
+    if (src_y <= 0.0) src_y = 0.0;
+    if (src_y >= height-1) src_y = height-1;
+    int round_y = int(src_y+0.5), round_x = int(src_x+0.5);
+    rectified_img_phase[idx] = img_phase[round_y*width+round_x];
+    rectified_bfmap[idx] = bfmap[round_y*width+round_x];
+    sub_pixel_map_x[idx] = w + (round_x - src_x);
 }
 
 __global__ void depth_filter(float *depth_map, float *depth_map_raw, int *height_array, int *width_array, float *camera_kp, float *depth_filter_max_distance, int *depth_filter_minmum_points_in_checking_range)
@@ -147,9 +179,9 @@ __global__ void depth_avg_filter(float *depth_map, int *height_array, int *width
     }
 }
 
-__global__ void get_dmap_from_index_map(float *depth_map, int *height_array, int *width_array, float *img_index_left, float *img_index_right, float *baseline,float *dmap_base,float *fx, float *img_index_left_sub_px,float *img_index_right_sub_px, short *belief_map_l, short *belief_map_r, float *roughly_projector_area_in_image)
+__global__ void gen_depth_from_index_matching(float *depth_map, int *height_array, int *width_array, float *img_index_left, float *img_index_right, float *baseline,float *dmap_base,float *fx, float *img_index_left_sub_px,float *img_index_right_sub_px, short *belief_map_l, short *belief_map_r, float *roughly_projector_area_in_image, float *depth_cutoff)
 {
-    float depth_cutoff_near = 0.1, depth_cutoff_far = 2.0;
+    float depth_cutoff_near = depth_cutoff[0], depth_cutoff_far = depth_cutoff[1];
     int width = width_array[0];
     float area_scale = 1.333 * roughly_projector_area_in_image[0];
     float max_allow_pixel_per_index = 1.25 + area_scale * width / 1280.0;
@@ -249,38 +281,6 @@ __global__ void get_dmap_from_index_map(float *depth_map, int *height_array, int
             if ((depth_cutoff_near < depth) & (depth < depth_cutoff_far)) depth_map[curr_pix_idx] = depth;
         }
     }
-}
-
-__global__ void rectify_phase(float *img_phase, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, float *sub_pixel_map_x)
-{   //rectify_map is, for each pixel (u,v) in the destination (corrected and rectified) image, the corresponding coordinates in the source image (that is, in the original image from camera)
-    int height = height_array[0];
-    int width = width_array[0];
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int w = idx % width;
-    float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
-    if (src_x <= 0.0) src_x = 0.0;
-    if (src_x >= width-1) src_x = width-1;
-    if (src_y <= 0.0) src_y = 0.0;
-    if (src_y >= height-1) src_y = height-1;
-    rectified_img_phase[idx] = img_phase[int(src_y+0.5), int(src_x+0.5)];
-    sub_pixel_map_x[idx] = w + (int(src_x+0.5) - src_x);
-}
-
-__global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, short *rectified_bfmap, float *sub_pixel_map_x)
-{
-    int height = height_array[0];
-    int width = width_array[0];
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int w = idx % width;
-    float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
-    if (src_x <= 0.0) src_x = 0.0;
-    if (src_x >= width-1) src_x = width-1;
-    if (src_y <= 0.0) src_y = 0.0;
-    if (src_y >= height-1) src_y = height-1;
-    int round_y = int(src_y+0.5), round_x = int(src_x+0.5);
-    rectified_img_phase[idx] = img_phase[round_y*width+round_x];
-    rectified_bfmap[idx] = bfmap[round_y*width+round_x];
-    sub_pixel_map_x[idx] = w + (round_x - src_x);
 }
 
 __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optimized_depth_map, int *height_array, int *width_array, float *img_index_left_sub_px)
