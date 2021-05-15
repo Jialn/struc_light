@@ -404,7 +404,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     unoptimized_depth_map = np.zeros_like(img_index_left, dtype=np.float32)
     depth_map = np.zeros_like(img_index_left, dtype=np.float32)
     start_time = time.time()
-    get_dmap_from_index_map(unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left)
+    get_dmap_from_index_map(unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right)
     optimize_dmap_using_sub_pixel_map(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px)
     print("depth map generating from index %.3f s" % (time.time() - start_time))
 

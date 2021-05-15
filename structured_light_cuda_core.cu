@@ -166,11 +166,12 @@ __global__ void get_dmap_from_index_map(float *depth_map, int *height_array, int
     float *line_l = img_index_left + h * width;
     int last_right_corres_point = -1;
     for (int w = w_start; w < w_end; w++) {
+        int curr_pix_idx = h*width + w;
+        depth_map[curr_pix_idx] = 0.0;
         if (isnan(line_l[w])) {
             last_right_corres_point = -1;
             continue;
         }
-        int curr_pix_idx = h*width + w;
         // find the nearest left and right corresponding points in right image
         int cnt_l = 0, cnt_r = 0;
         int most_corres_pts_l = -1, most_corres_pts_r = -1;
@@ -287,7 +288,10 @@ __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optim
     int width = width_array[0];
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
     int w = current_pix_idx % width;
-    if (w == 0 | w == width-1) return;
+    if (w == 0 | w == width-1) {
+        optimized_depth_map[current_pix_idx] = depth_map[current_pix_idx];
+        return;
+    }
 
     float left_value = 0.0, right_value = 0.0;
     float left_pos = 0.0, right_pos = 0.0;
@@ -314,5 +318,8 @@ __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optim
     }
     if (left_value >= 0.00001 & right_value >= 0.00001) {
         optimized_depth_map[current_pix_idx] = left_value + (right_value-left_value) * (w-left_pos)/(right_pos-left_pos);
+    }
+    else {
+        optimized_depth_map[current_pix_idx] = 0.0;
     }
 }
