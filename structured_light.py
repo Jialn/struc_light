@@ -258,8 +258,8 @@ def depth_filter(depth_map, depth_map_raw, height, width, camera_kp):
                     continue
             w += 1
 
-@numba.jit  ((numba.float32[:,:], numba.float32[:,:], numba.int64, numba.int64), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
-def depth_avg_filter(depth_map, depth_map_raw, height, width):
+@numba.jit  ((numba.float32[:,:], numba.int64, numba.int64), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
+def depth_avg_filter(depth_map, height, width):
     filter_max_length = depth_avg_filter_max_length
     filter_weights = np.array([1.0, 0.8, 0.6, 0.5, 0.4, 0.2, 0.1])
     filter_thres = depth_avg_filter_unvalid_thres
@@ -415,7 +415,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     print("flying point filter %.3f s" % (time.time() - start_time))
     if use_depth_avg_filter:
         start_time = time.time()
-        depth_avg_filter(depth_map, depth_map_raw, height, width)
+        depth_avg_filter(depth_map, height, width)
         print("depth avg filter %.3f s" % (time.time() - start_time))
     print("Total pipeline time: %.3f s" % (time.time() - pipe_start_time))
     
