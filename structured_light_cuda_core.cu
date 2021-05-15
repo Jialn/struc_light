@@ -1,23 +1,18 @@
 
-__global__ void multiply(float *dest, float *a, float *b, float *offset) // a test function
-{
-    const int idx = threadIdx.x +  blockIdx.x*blockDim.x;
-    dest[idx] = a[idx] * b[idx] + offset[0];
-}
-
-__global__ void gray_decode(unsigned char *src, unsigned char *imgs_thresh, unsigned char *valid_map, int *image_num, int *height, int *width, short *img_index, int *unvalid_thres)
+__global__ void gray_decode(unsigned char *src, unsigned char *avg_thres_posi, unsigned char *avg_thres_nega, unsigned char *valid_map, int *image_num, int *height, int *width, short *img_index, int *unvalid_thres)
 {
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if (valid_map[idx] == 0) {
         img_index[idx] = -1;
         return;
     }
+    int avg_thres = avg_thres_posi[idx]/2 + avg_thres_nega[idx]/2;
     int bin_code = 0;
     int current_bin_code_bit = 0;
     for (unsigned int i = 0; i < image_num[0]; i++) {
         int src_idx = idx + i * height[0] * width[0];
-        if (src[src_idx]>=imgs_thresh[idx]+unvalid_thres[0]) current_bin_code_bit = current_bin_code_bit ^ 1;
-        else if (src[src_idx]<=imgs_thresh[idx]-unvalid_thres[0]) current_bin_code_bit = current_bin_code_bit ^ 0;
+        if (src[src_idx]>=avg_thres+unvalid_thres[0]) current_bin_code_bit = current_bin_code_bit ^ 1;
+        else if (src[src_idx]<=avg_thres-unvalid_thres[0]) current_bin_code_bit = current_bin_code_bit ^ 0;
         else {
             bin_code = -1;
             break;
@@ -97,6 +92,58 @@ __global__ void depth_filter(float *depth_map, float *depth_map_raw, int *height
         }
         
         if (is_not_flying_point_flag <= minmum_point_num_in_range) depth_map[current_pix_idx] = 0.0;
+    }
+}
+
+__global__ void depth_avg_filter(float *depth_map, int *height_array, int *width_array, int *depth_avg_filter_max_length, float *depth_avg_filter_unvalid_thres)
+{
+    // a point could be considered as not flying when: points in checking range below max_distance > minmum num 
+    int height = height_array[0];
+    int width = width_array[0];
+    int filter_max_length = depth_avg_filter_max_length[0];
+    float filter_thres = depth_avg_filter_unvalid_thres[0];
+    const float filter_weights[6] = {1.0, 0.8, 0.6, 0.5, 0.4, 0.2};
+
+    int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int h = blockIdx.x / 4;
+    int w = current_pix_idx % width;
+
+    if (depth_map[current_pix_idx] != 0) {
+        // horizontal
+        float left_weight = 0.0, right_weight = 0.0, depth_sum = depth_map[current_pix_idx]*filter_weights[0];
+        bool stop_flag = false;
+        for (int i=1; i< filter_max_length+1; i++) {
+            int l_idx = w-i, r_idx = w+i;
+            if(depth_map[h*width+l_idx] != 0 & depth_map[h*width+r_idx] != 0 & l_idx > 0 & r_idx < width & \
+                abs(depth_map[h*width+l_idx] - depth_map[current_pix_idx]) < filter_thres & abs(depth_map[h*width+r_idx] - depth_map[current_pix_idx]) < filter_thres) {
+                left_weight += filter_weights[i];
+                right_weight += filter_weights[i];
+                depth_sum += (depth_map[h*width+r_idx] + depth_map[h*width+l_idx]) * filter_weights[i];
+            }
+            else {
+                stop_flag = true; 
+                break;
+            }
+        }
+        if (!stop_flag) depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
+        __syncthreads();
+        // vertical
+        left_weight = 0.0, right_weight = 0.0, depth_sum = depth_map[current_pix_idx]*filter_weights[0];
+        stop_flag = false;
+        for (int i=1; i< filter_max_length+1; i++) {
+            int l_idx = h-i, r_idx = h+i;
+            if(depth_map[l_idx*width+w] != 0 & depth_map[r_idx*width+w] != 0 & l_idx > 0 & r_idx < height & \
+                abs(depth_map[l_idx*width+w] - depth_map[current_pix_idx]) < filter_thres & abs(depth_map[r_idx*width+w] - depth_map[current_pix_idx]) < filter_thres) {
+                left_weight += filter_weights[i];
+                right_weight += filter_weights[i];
+                depth_sum += (depth_map[r_idx*width+w] + depth_map[l_idx*width+w]) * filter_weights[i];
+            }
+            else {
+                stop_flag = true; 
+                break;
+            }
+        }
+        if (!stop_flag) depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
     }
 }
 
@@ -203,3 +250,69 @@ __global__ void get_dmap_from_index_map(float *depth_map, int *height_array, int
     }
 }
 
+__global__ void rectify_phase(float *img_phase, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, float *sub_pixel_map_x)
+{   //rectify_map is, for each pixel (u,v) in the destination (corrected and rectified) image, the corresponding coordinates in the source image (that is, in the original image from camera)
+    int height = height_array[0];
+    int width = width_array[0];
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int w = idx % width;
+    float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
+    if (src_x <= 0.0) src_x = 0.0;
+    if (src_x >= width-1) src_x = width-1;
+    if (src_y <= 0.0) src_y = 0.0;
+    if (src_y >= height-1) src_y = height-1;
+    rectified_img_phase[idx] = img_phase[int(src_y+0.5), int(src_x+0.5)];
+    sub_pixel_map_x[idx] = w + (int(src_x+0.5) - src_x);
+}
+
+__global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, short *rectified_bfmap, float *sub_pixel_map_x)
+{
+    int height = height_array[0];
+    int width = width_array[0];
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int w = idx % width;
+    float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
+    if (src_x <= 0.0) src_x = 0.0;
+    if (src_x >= width-1) src_x = width-1;
+    if (src_y <= 0.0) src_y = 0.0;
+    if (src_y >= height-1) src_y = height-1;
+    int round_y = int(src_y+0.5), round_x = int(src_x+0.5);
+    rectified_img_phase[idx] = img_phase[round_y*width+round_x];
+    rectified_bfmap[idx] = bfmap[round_y*width+round_x];
+    sub_pixel_map_x[idx] = w + (round_x - src_x);
+}
+
+__global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optimized_depth_map, int *height_array, int *width_array, float *img_index_left_sub_px)
+{
+    int width = width_array[0];
+    int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int w = current_pix_idx % width;
+    if (w == 0 | w == width-1) return;
+
+    float left_value = 0.0, right_value = 0.0;
+    float left_pos = 0.0, right_pos = 0.0;
+    float real_pos_for_current_depth = img_index_left_sub_px[current_pix_idx];
+    if (depth_map[current_pix_idx] <= 0.00001) {
+        if (depth_map[current_pix_idx-1] >= 0.00001 & depth_map[current_pix_idx+1] >= 0.00001) {
+            right_pos = img_index_left_sub_px[current_pix_idx+1];
+            right_value = depth_map[current_pix_idx+1];
+            left_pos = img_index_left_sub_px[current_pix_idx-1];
+            left_value = depth_map[current_pix_idx-1];
+        }
+    }
+    else if (real_pos_for_current_depth >= w) {
+        right_pos = real_pos_for_current_depth;
+        right_value = depth_map[current_pix_idx];
+        left_pos = img_index_left_sub_px[current_pix_idx-1];
+        left_value = depth_map[current_pix_idx-1];
+    }
+    else {
+        right_pos = img_index_left_sub_px[current_pix_idx+1];
+        right_value = depth_map[current_pix_idx+1];
+        left_pos = real_pos_for_current_depth;
+        left_value = depth_map[current_pix_idx];
+    }
+    if (left_value >= 0.00001 & right_value >= 0.00001) {
+        optimized_depth_map[current_pix_idx] = left_value + (right_value-left_value) * (w-left_pos)/(right_pos-left_pos);
+    }
+}
