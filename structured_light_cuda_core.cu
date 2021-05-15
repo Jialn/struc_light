@@ -18,8 +18,8 @@ __global__ void gray_decode(unsigned char *src, unsigned char *avg_thres_posi, u
             break;
         }
         bin_code += (current_bin_code_bit <<  (image_num[0]-1-i));
-    img_index[idx] = bin_code;
     }
+    img_index[idx] = bin_code;
 }
 
 __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, float *img_phase, short *img_index, int *unvalid_thres, float *phsift_pattern_period_per_pixel_array)
@@ -75,13 +75,10 @@ __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, flo
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     int w = idx % width;
     float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
-    if (src_x <= 0.0) src_x = 0.0;
-    if (src_x >= width-1) src_x = width-1;
-    if (src_y <= 0.0) src_y = 0.0;
-    if (src_y >= height-1) src_y = height-1;
     int round_y = int(src_y+0.5), round_x = int(src_x+0.5);
-    rectified_img_phase[idx] = img_phase[round_y*width+round_x];
-    rectified_bfmap[idx] = bfmap[round_y*width+round_x];
+    int src_pix_idx = round_y*width + round_x;
+    rectified_img_phase[idx] = img_phase[src_pix_idx];
+    rectified_bfmap[idx] = bfmap[src_pix_idx];
     sub_pixel_map_x[idx] = w + (round_x - src_x);
 }
 
@@ -285,6 +282,8 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
 
 __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optimized_depth_map, int *height_array, int *width_array, float *img_index_left_sub_px)
 {
+    // interpo for depth map using sub_pixel
+    // this does not improve a lot on rendered data because no distortion and less stereo rectify for left camera, but useful for real captures
     int width = width_array[0];
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
     int w = current_pix_idx % width;

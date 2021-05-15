@@ -87,10 +87,6 @@ def rectify_phase(img_phase, rectify_map_x, rectify_map_y, height, width, rectif
     for h in prange(height):
         for w in range(width):
             src_x, src_y = rectify_map_x[h,w], rectify_map_y[h,w]
-            if src_x <= 0.0: src_x = 0.0
-            if src_x >= width-1: src_x = width-1
-            if src_y <= 0.0: src_y = 0.0
-            if src_y >= height-1: src_y = height-1
             ### if use interpolation, only apply to y axis. The precision will be a little bit higher
             # src_x_round, src_y_int = round(src_x), int(src_y)
             # upper = img_phase[src_y_int, src_x_round]
@@ -111,10 +107,6 @@ def rectify_belief_map(img, rectify_map_x, rectify_map_y, height, width, rectifi
     for h in prange(height):
         for w in range(width):
             src_x, src_y = rectify_map_x[h,w], rectify_map_y[h,w]
-            if src_x <= 0.0: src_x = 0.0
-            if src_x >= width-1: src_x = width-1
-            if src_y <= 0.0: src_y = 0.0
-            if src_y >= height-1: src_y = height-1
             rectified_img[h,w] = img[round(src_y), round(src_x)]
 
 @numba.jit  ((numba.float32[:,:], numba.int64,numba.int64, numba.float32[:,:],numba.float32[:,:], numba.float32,numba.float32,numba.float32, numba.float32[:,:],numba.float32[:,:],numba.int16[:,:], numba.int16[:,:] ), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
@@ -202,6 +194,8 @@ def gen_depth_from_index_matching(depth_map, height,width, img_index_left,img_in
 
 @numba.jit  ((numba.float32[:,:], numba.float32[:,:], numba.int64,numba.int64, numba.float32[:,:]), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
 def optimize_dmap_using_sub_pixel_map(depth_map, optimized_depth_map, height,width, img_index_left_sub_px):
+    # interpo for depth map using sub_pixel
+    # this does not improve a lot on rendered data because no distortion and less stereo rectify for left camera, but useful for real captures
     for h in prange(height):
         for w in range(width):
             left_value, right_value = 0, 0
@@ -303,7 +297,6 @@ def depth_avg_filter(depth_map, height, width):
 global_reading_img_time = 0
 img_phase = None # will be faster as global variable(will not free mem every call)
 img_index = None
-
 def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, images=None):
     global global_reading_img_time, img_phase, img_index
     unvalid_thres = 0

@@ -180,7 +180,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None):
     baseline = np.linalg.norm(cam_transform)
 
     ### Infer DepthMap from Decoded Index
-    depth_map = np.zeros_like(img_index_left, dtype=np.float)
+    depth_map = np.zeros_like(img_index_left, dtype=np.float64)
     start_time = time.time()
     gen_depth_from_index_matching(depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx)
     print("depth map generating from index %.3f s" % (time.time() - start_time))
@@ -200,10 +200,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None):
 #   python structured_light_simplified.py pattern_examples\struli_test1\
 if __name__ == "__main__":
     import sys
-    import glob
-    import shutil
-    import open3d as o3d
-    import matplotlib.pyplot as plt
+
 
     if len(sys.argv) <= 1:
         print("run with args 'pattern_path'")
@@ -215,6 +212,7 @@ if __name__ == "__main__":
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path)
 
     ### build point cloud
+    import open3d as o3d
     rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
         o3d.geometry.Image(gray.astype(np.uint8)),
         o3d.geometry.Image(depth_map_mm.astype(np.float32)),

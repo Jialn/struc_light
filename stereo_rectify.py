@@ -57,6 +57,10 @@ class StereoRectify():
 
             self.remap_x_left_scaled, self.remap_y_left_scaled = scale_map(remap_x_left), scale_map(remap_y_left)
             self.remap_x_right_scaled, self.remap_y_right_scaled = scale_map(remap_x_right), scale_map(remap_y_right)
+            self.remap_x_left_scaled = np.clip(self.remap_x_left_scaled, 0.0, w-1)
+            self.remap_x_right_scaled = np.clip(self.remap_x_right_scaled, 0.0, w-1)
+            self.remap_y_left_scaled = np.clip(self.remap_y_left_scaled, 0.0, h-1)
+            self.remap_y_right_scaled = np.clip(self.remap_y_right_scaled, 0.0, h-1)
             self.rectified_camera_kd_l = self.P1[:,:3]*self.scale
             self.rectified_camera_kd_l[2,2] = 1.0
             self.rectified_camera_kd_r = self.P2[:,:3]*self.scale

@@ -47,47 +47,47 @@ optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimi
 
 def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map_bin, image_num, height,width, img_index, unvalid_thres):
     gray_decode_cuda_kernel(drv.In(src_imgs), drv.In(avg_thres_posi), drv.In(avg_thres_nega), drv.In(prj_valid_map_bin),
-        drv.In(np.array(image_num).astype(np.int32)),drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
-        drv.Out(img_index),drv.In(np.array(unvalid_thres).astype(np.int32)),
+        drv.In(np.int32(image_num)),drv.In(np.int32(height)),drv.In(np.int32(width)),
+        drv.Out(img_index),drv.In(np.int32(unvalid_thres)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def phase_shift_decode_cuda(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres):
     phase_shift_decode_cuda_kernel(drv.In(images_phsft_src),
-        drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
-        drv.Out(img_phase),drv.InOut(img_index),drv.In(np.array(phase_decoding_unvalid_thres).astype(np.int32)),drv.In(np.array(phsift_pattern_period_per_pixel).astype(np.float32)),
+        drv.In(np.int32(height)),drv.In(np.int32(width)),
+        drv.Out(img_phase),drv.InOut(img_index),drv.In(np.int32(phase_decoding_unvalid_thres)),drv.In(np.float32(phsift_pattern_period_per_pixel)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def depth_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd_l):
     depth_filter_cuda_kernel(drv.InOut(depth_map),drv.In(depth_map_raw),
-        drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
-        drv.In(camera_kd_l), drv.In(np.array(depth_filter_max_distance).astype(np.float32)), drv.In(np.array(depth_filter_minmum_points_in_checking_range).astype(np.int32)),
+        drv.In(np.int32(height)),drv.In(np.int32(width)),
+        drv.In(camera_kd_l), drv.In(np.float32(depth_filter_max_distance)), drv.In(np.int32(depth_filter_minmum_points_in_checking_range)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right):
     gen_depth_from_index_matching_cuda_kernel(drv.Out(depth_map),
-        drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
+        drv.In(np.int32(height)),drv.In(np.int32(width)),
         drv.In(img_index_left),drv.In(img_index_right), 
-        drv.In(np.array(baseline).astype(np.float32)),drv.In(np.array(dmap_base).astype(np.float32)),drv.In(np.array(fx).astype(np.float32)),
+        drv.In(np.float32(baseline)),drv.In(np.float32(dmap_base)),drv.In(np.float32(fx)),
         drv.In(img_index_left_sub_px),drv.In(img_index_right_sub_px),drv.In(belief_map_left),drv.In(belief_map_right), 
-        drv.In(np.array(roughly_projector_area_in_image).astype(np.float32)),drv.In(np.array([depth_cutoff_near, depth_cutoff_far]).astype(np.float32)),
+        drv.In(np.float32(roughly_projector_area_in_image)),drv.In(np.float32([depth_cutoff_near, depth_cutoff_far])),
         block=(96, 1, 1), grid=(height, 1))
 
 def rectify_phase_and_belief_map_cuda(img_phase, belief_map, rectify_map_x, rectify_map_y, height,width, rectified_img_phase, rectified_belief_map, sub_pixel_map):
     rectify_phase_and_belief_map_cuda_kernel(drv.In(img_phase),drv.In(belief_map),drv.In(rectify_map_x),drv.In(rectify_map_y),
-        drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
-        drv.Out(rectified_img_phase), drv.Out(rectified_belief_map), drv.Out(sub_pixel_map), 
-        drv.In(np.array(roughly_projector_area_in_image).astype(np.float32)),
+        drv.In(np.int32(height)),drv.In(np.int32(width)),
+        drv.Out(rectified_img_phase), drv.Out(rectified_belief_map), drv.Out(sub_pixel_map),
+        drv.In(np.float32(roughly_projector_area_in_image)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def depth_avg_filter_cuda(depth_map, height, width):
     depth_avg_filter_cuda_kernel(drv.InOut(depth_map),
-        drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
-        drv.In(np.array(depth_avg_filter_max_length).astype(np.int32)),drv.In(np.array(depth_avg_filter_unvalid_thres).astype(np.float32)),
+        drv.In(np.int32(height)),drv.In(np.int32(width)),
+        drv.In(np.int32(depth_avg_filter_max_length)),drv.In(np.float32(depth_avg_filter_unvalid_thres)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px):
     optimize_dmap_using_sub_pixel_map_cuda_kernel(drv.In(unoptimized_depth_map),drv.Out(depth_map),
-        drv.In(np.array(height).astype(np.int32)),drv.In(np.array(width).astype(np.int32)),
+        drv.In(np.int32(height)),drv.In(np.int32(width)),
         drv.In(img_index_left_sub_px),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
@@ -96,7 +96,6 @@ def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, hei
 global_reading_img_time = 0
 img_phase = None # will be faster as global variable(will not free mem every call)
 img_index = None
-
 def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, images=None):
     global global_reading_img_time, img_phase, img_index
     unvalid_thres = 0
@@ -157,8 +156,8 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
     belief_map = img_index # img_index reused as belief_map when phase_shift_decoding
     print("phase decoding: %.3f s" % (time.time() - start_time))
     
-    start_time = time.time()
     ### rectify the decoding res, accroding to left or right
+    start_time = time.time()
     if appendix == '_l.bmp': rectify_map_x, rectify_map_y, camera_kd = rectifier.remap_x_left_scaled, rectifier.remap_y_left_scaled, rectifier.rectified_camera_kd_l
     else: rectify_map_x, rectify_map_y, camera_kd = rectifier.remap_x_right_scaled, rectifier.remap_y_right_scaled, rectifier.rectified_camera_kd_r
     rectify_phase_and_belief_map_cuda(img_phase, belief_map, rectify_map_x, rectify_map_y, height,width, rectified_img_phase, rectified_belief_map, sub_pixel_map)
