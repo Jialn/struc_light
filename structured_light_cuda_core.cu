@@ -328,3 +328,9 @@ __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optim
         optimized_depth_map[current_pix_idx] = 0.0;
     }
 }
+
+__global__ void convert_dmap_to_mili_meter(float *depth_map)
+{
+    int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
+    depth_map[current_pix_idx] = 1000.0*depth_map[current_pix_idx];
+}

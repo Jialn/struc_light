@@ -45,6 +45,7 @@ gen_depth_from_index_matching_cuda_kernel = cuda_module.get_function("gen_depth_
 rectify_phase_and_belief_map_cuda_kernel = cuda_module.get_function("rectify_phase_and_belief_map")
 depth_avg_filter_cuda_kernel = cuda_module.get_function("depth_avg_filter")
 optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
+convert_dmap_to_mili_meter = cuda_module.get_function("convert_dmap_to_mili_meter")
 
 def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map_bin, image_num, height,width, img_index, unvalid_thres):
     gray_decode_cuda_kernel(src_imgs, cuda.In(avg_thres_posi), cuda.In(avg_thres_nega), cuda.In(prj_valid_map_bin),
@@ -205,6 +206,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
 
 
 def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
+    # return depth map in mili-meter
     global global_reading_img_time
     if rectifier is None: rectifier = StereoRectify(scale=1.0, cali_file=pattern_path+'calib.yml')
     if images is not None: images_left, images_right = images[0], images[1]
@@ -245,6 +247,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
         depth_avg_filter_cuda(gpu_depth_map_filtered, height, width)
         print("depth avg filter: %.3f s" % (time.time() - start_time))
     # readout
+    convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1));
     start_time = time.time()
     cuda.memcpy_dtoh(depth_map, gpu_depth_map_filtered)
     print("readout from gpu: %.3f s" % (time.time() - start_time))
@@ -254,11 +257,11 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     global_reading_img_time = 0
     ### Save Mid Results for visualizing
     if save_mid_res_for_visulize:   
-        depth_map_uint16 = depth_map * 30000
+        depth_map_uint16 = depth_map * 30
         cv2.imwrite(res_path + '/depth_alg2.png', depth_map_uint16.astype(np.uint16), [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
         depth_map_raw = np.empty_like(gray_left, dtype=np.float32)
         cuda.memcpy_dtoh(depth_map_raw, gpu_depth_map_raw)
-        depth_map_raw_uint16 = depth_map_raw * 30000
+        depth_map_raw_uint16 = depth_map_raw * 30
         cv2.imwrite(res_path + '/depth_alg2_raw.png', depth_map_raw_uint16.astype(np.uint16), [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
         belief_map_left = np.clip(belief_map_left * 255, 0, 255).astype(np.uint8)
         belief_map_right = np.clip(belief_map_right * 255, 0, 255).astype(np.uint8)
@@ -269,9 +272,8 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
         cv2.imwrite(res_path + "/ph_correspondence_l.png", images_phsft_left_v)
         cv2.imwrite(res_path + "/ph_correspondence_r.png", images_phsft_right_v)
     ### Prepare results
-    depth_map_mm = depth_map * 1000
     gray_img = rectifier.rectify_image(gray_left)
-    return gray_img, depth_map_mm, camera_kd_l
+    return gray_img, depth_map, camera_kd_l
 
 
 # test with existing pattern example: 
@@ -287,7 +289,9 @@ if __name__ == "__main__":
     ### build up runing parameters and run
     res_path = image_path + r'\res' if sys.platform == 'win32' else image_path + '/res'
     if not os.path.exists(res_path): os.system("mkdir " + res_path)
-    gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path)
+    
+    rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
+    gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     
     def report_depth_error(depth_img, depth_gt):
         gray_img = cv2.imread(image_path + str(default_image_seq_start_index) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
