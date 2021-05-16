@@ -1,3 +1,21 @@
+alloc gpu mem and copy src images into gpu: 0.011 s
+gray code decoding: 0.003 s
+phase decoding: 0.000 s
+rectify: 0.001 s
+- left decoding total: 0.020 s
+alloc gpu mem and copy src images into gpu: 0.011 s
+gray code decoding: 0.003 s
+phase decoding: 0.001 s
+rectify: 0.001 s
+- left and right decoding in total: 0.040 s
+index matching and depth map generating: 0.041 s  ***
+subpix optimize: 0.001 s
+flying point filter: 0.029 s **
+depth avg filter: 0.001 s
+readout from gpu: 0.005 s
+- Total time: 0.584 s
+- Total time without reading imgs and pre-built rectify maps: 0.117 s
+---------------------------------------
 
 x2:
 build ndarrays for decoding: 0.015 s  **
