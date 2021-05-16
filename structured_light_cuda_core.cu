@@ -104,6 +104,7 @@ __global__ void depth_filter(float *depth_map, float *depth_map_raw, int *height
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
     int h = blockIdx.x / 4;
     int w = current_pix_idx % width;
+    depth_map[current_pix_idx] = depth_map_raw[current_pix_idx];
 
     if (depth_map_raw[current_pix_idx] != 0) {
         float point_x = depth_map_raw[current_pix_idx] * (w - cx) / fx;
