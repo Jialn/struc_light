@@ -37,6 +37,7 @@ with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
     cuda_src_string = f.read()
 cuda_module = SourceModule(cuda_src_string)
 
+cuda_test = cuda_module.get_function("cuda_test")
 gray_decode_cuda_kernel = cuda_module.get_function("gray_decode")
 phase_shift_decode_cuda_kernel = cuda_module.get_function("phase_shift_decode")
 depth_filter_cuda_kernel = cuda_module.get_function("depth_filter")
@@ -91,6 +92,18 @@ def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, hei
         drv.In(img_index_left_sub_px),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
+### for simple pycuda test
+h, w = 2048*8, 2592
+a = np.random.randn(h, w).astype(np.float32)
+b = np.random.randn(h, w).astype(np.float32)
+dest = np.empty_like(a)
+
+start_time = time.time()
+cuda_test(drv.Out(dest), drv.In(a), drv.In(b), drv.In( np.array(1.0).astype(np.float32) ), block=(32,1,1), grid=(w*h//32,1))
+print("running time: %.4f s" % ((time.time() - start_time)/3))
+# print(dest)
+# print(dest-a*b)
+# exit()
 
 ### the index decoding part
 global_reading_img_time = 0

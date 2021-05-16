@@ -1,4 +1,10 @@
 
+__global__ void cuda_test(float *dest, float *a, float *b, float *offset) // a simple test function
+{
+    const int idx = threadIdx.x +  blockIdx.x*blockDim.x;
+    dest[idx] = a[idx] + b[idx] + offset[0];
+}
+
 __global__ void gray_decode(unsigned char *src, unsigned char *avg_thres_posi, unsigned char *avg_thres_nega, unsigned char *valid_map, int *image_num, int *height, int *width, short *img_index, int *unvalid_thres)
 {
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
@@ -70,7 +76,6 @@ __global__ void rectify_phase(float *img_phase, float *rectify_map_x, float *rec
 
 __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, short *rectified_bfmap, float *sub_pixel_map_x)
 {
-    int height = height_array[0];
     int width = width_array[0];
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     int w = idx % width;
