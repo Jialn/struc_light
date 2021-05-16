@@ -1,0 +1,88 @@
+
+x2:
+build ndarrays for decoding: 0.015 s  **
+gray code decoding: 0.010 s *
+phase decoding: 0.003 s
+rectify: 0.001 s
+x1:
+alloc mem for maps: 0.001 s
+index matching and depth map generating: 0.059 s  ***
+subpix optimize: 0.001 s
+flying point filter: 0.030 s  **
+depth avg filter: 0.001 s
+readout from gpu: 0.005 s
+
+- Total time: 0.641 s
+- Total time without reading imgs and pre-built rectify maps: 0.170 s
+---------------------------------------
+
+
+
+- Total time except reading imgs: 0.280 s
+valid points rate below 10mm: 2937088/3121565, 94.09023999179898%
+average_error(mm):0.11807555
+valid points rate below 1mm: 2920561/3121565, 93.56079402479205%
+average_error(mm):0.10351834
+valid points rate below 0.25mm: 2784446/3121565, 89.20032099283533%
+average_error(mm):0.09070509
+
+
+valid points rate below 10mm: 2921118/3121565, 93.57863763849222%
+average_error(mm):0.114909366
+valid points rate below 1mm: 2907148/3121565, 93.13110571139796%
+average_error(mm):0.102372356
+valid points rate below 0.25mm: 2778669/3121565, 89.01525356672055%
+average_error(mm):0.090637356
+
+---------------------------------------
+build ndarrays for decoding: 0.016 s
+gray code decoding: 0.011 s
+phase decoding: 0.009 s
+rectify: 0.025 s
+
+index matching and depth map generating: 0.078 s
+subpix optimize: 0.012 s
+flying point filter: 0.037 s
+depth avg filter: 0.005 s
+- Total time: 0.518 s
+- Total time except reading imgs: 0.279 s
+
+---------------------------------------
+build decoding ndarray: 0.017 s  **
+gray code decoding: 0.011 s
+phase decoding: 0.008 s
+rectify: 0.026 s  **
+index matching and depth map generating: 0.075 s  ***
+subpix optimize: 0.019 s *
+flying point filter: 0.038 s *
+depth avg filter: 0.005 s
+- Total time: 0.532 s
+- Total time except reading imgs: 0.300 s
+
+---------------------------------------
+build decoding ndarray: 0.066 s ***
+gray code decoding: 0.010 s  cuda
+phase decoding: 0.008 s  cuda
+rectify: 0.017 s cuda
+
+index matching and depth map generating: 0.073 s  cuda **
+subpix optimize: 0.019 s  cpu
+flying point filter: 0.031 s cuda
+depth avg filter: 0.005 s cuda
+- Total time: 0.598 s
+- Total time except reading imgs: 0.362 s
+
+---------------------------------------
+build gray_decode nparray using 0.041 s  ***?
+build phase_decode nparray using 0.022 s  **?
+gray code index decoding using 0.010 s
+phase decoding using 0.009 s
+rectify using 0.050 s  ****  ->cuda
+
+index matching and depth map generating: 0.061 s
+subpix optimize 0.033 s  **  ->cuda
+flying point filter 0.037 s
+depth avg filter 0.073 s  ***  ->cuda
+- Total time: 0.728 s
+- Total time except reading imgs: 0.505 s
+
