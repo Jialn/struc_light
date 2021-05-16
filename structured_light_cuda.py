@@ -72,7 +72,7 @@ def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left,
         cuda.In(np.float32(baseline)), cuda.In(np.float32(dmap_base)),cuda.In(np.float32(fx)),
         img_index_left_sub_px, img_index_right_sub_px, belief_map_left,belief_map_right, 
         cuda.In(np.float32(roughly_projector_area_in_image)), cuda.In(np.float32([depth_cutoff_near, depth_cutoff_far])),
-        block=(96, 1, 1), grid=(height, 1))
+        block=(48*9, 1, 1), grid=(height, 1))
 
 def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px):
     optimize_dmap_using_sub_pixel_map_cuda_kernel(unoptimized_depth_map,depth_map,
