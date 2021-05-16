@@ -63,7 +63,6 @@ def rectify_phase_and_belief_map_cuda(img_phase, belief_map, rectify_map_x, rect
     rectify_phase_and_belief_map_cuda_kernel(img_phase, belief_map, rectify_map_x, rectify_map_y,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         rectified_img_phase, rectified_belief_map, sub_pixel_map,
-        cuda.In(np.float32(roughly_projector_area_in_image)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right):
@@ -73,6 +72,7 @@ def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left,
         cuda.In(np.float32(baseline)), cuda.In(np.float32(dmap_base)),cuda.In(np.float32(fx)),
         img_index_left_sub_px, img_index_right_sub_px, belief_map_left,belief_map_right, 
         cuda.In(np.float32(roughly_projector_area_in_image)), cuda.In(np.float32([depth_cutoff_near, depth_cutoff_far])),
+        cuda.In(np.int32(remove_possibly_outliers_when_matching)),
         block=(48*9, 1, 1), grid=(height, 1))
 
 def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px):

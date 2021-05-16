@@ -182,7 +182,7 @@ __global__ void depth_avg_filter(float *depth_map, int *height_array, int *width
     }
 }
 
-__global__ void gen_depth_from_index_matching(float *depth_map, int *height_array, int *width_array, float *img_index_left, float *img_index_right, float *baseline,float *dmap_base,float *fx, float *img_index_left_sub_px,float *img_index_right_sub_px, short *belief_map_l, short *belief_map_r, float *roughly_projector_area_in_image, float *depth_cutoff)
+__global__ void gen_depth_from_index_matching(float *depth_map, int *height_array, int *width_array, float *img_index_left, float *img_index_right, float *baseline,float *dmap_base,float *fx, float *img_index_left_sub_px,float *img_index_right_sub_px, short *belief_map_l, short *belief_map_r, float *roughly_projector_area_in_image, float *depth_cutoff, int *remove_possibly_outliers_when_matching)
 {
     float depth_cutoff_near = depth_cutoff[0], depth_cutoff_far = depth_cutoff[1];
     int width = width_array[0];
@@ -191,7 +191,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     float max_index_offset_when_matching = 1.3 * (1280.0 / width);  //typical condition: a lttle larger than 2.0 for 640, 1.0 for 1280, 0.5 for 2560
     float max_index_offset_when_matching_ex = max_index_offset_when_matching * 1.5;
     float right_corres_point_offset_range = (width / 128) * area_scale;
-    bool check_outliers = true;
+    bool check_outliers = (remove_possibly_outliers_when_matching[0] != 0);
 
     int h = blockIdx.x;  //current_line
     int thread_working_length = width / blockDim.x;
