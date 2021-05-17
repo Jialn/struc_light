@@ -40,7 +40,7 @@ cuda_module = SourceModule(cuda_src_string)
 cuda_test = cuda_module.get_function("cuda_test")
 gray_decode_cuda_kernel = cuda_module.get_function("gray_decode")
 phase_shift_decode_cuda_kernel = cuda_module.get_function("phase_shift_decode")
-depth_filter_cuda_kernel = cuda_module.get_function("depth_filter")
+flying_points_filter_cuda_kernel = cuda_module.get_function("flying_points_filter")
 gen_depth_from_index_matching_cuda_kernel = cuda_module.get_function("gen_depth_from_index_matching")
 rectify_phase_and_belief_map_cuda_kernel = cuda_module.get_function("rectify_phase_and_belief_map")
 depth_avg_filter_cuda_kernel = cuda_module.get_function("depth_avg_filter")
@@ -81,8 +81,8 @@ def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, hei
         img_index_left_sub_px,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def depth_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd_l):
-    depth_filter_cuda_kernel(depth_map, depth_map_raw,
+def flying_points_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd_l):
+    flying_points_filter_cuda_kernel(depth_map, depth_map_raw,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(camera_kd_l), cuda.In(np.float32(depth_filter_max_distance)), cuda.In(np.int32(depth_filter_minmum_points_in_checking_range)),
         block=(width//4, 1, 1), grid=(height*4, 1))
@@ -240,7 +240,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     print("subpix optimize: %.3f s" % (time.time() - start_time))
     ### Run Depth Map Filter
     start_time = time.time()
-    depth_filter_cuda(gpu_depth_map_filtered, gpu_depth_map_raw, height, width, camera_kd_l.astype(np.float32))
+    flying_points_filter_cuda(gpu_depth_map_filtered, gpu_depth_map_raw, height, width, camera_kd_l.astype(np.float32))
     print("flying point filter: %.3f s" % (time.time() - start_time))
     if use_depth_avg_filter:
         start_time = time.time()

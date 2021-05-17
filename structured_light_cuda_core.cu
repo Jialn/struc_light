@@ -72,107 +72,6 @@ __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, flo
     sub_pixel_map_x[idx] = w + (round_x - src_x);
 }
 
-__global__ void depth_filter(float *depth_map, float *depth_map_raw, int *height_array, int *width_array, float *camera_kp, float *depth_filter_max_distance, int *depth_filter_minmum_points_in_checking_range)
-{
-    // a point could be considered as not flying when: points in checking range below max_distance > minmum num 
-    int height = height_array[0];
-    int width = width_array[0];
-    float max_distance = depth_filter_max_distance[0];
-    int minmum_point_num_in_range = depth_filter_minmum_points_in_checking_range[0] + (width / 400) * (width / 400);
-    float checking_range_in_meter = max_distance * 1.2;
-    int checking_range_limit = width/50;
-    float fx = camera_kp[0];
-    float cx = camera_kp[2];
-    float fy = camera_kp[1*3+1];
-    float cy = camera_kp[1*3+2];
-
-    int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int h = blockIdx.x / 4;
-    int w = current_pix_idx % width;
-    float curr_pix_value = depth_map_raw[current_pix_idx];
-    depth_map[current_pix_idx] = curr_pix_value;
-
-    if (curr_pix_value != 0) {
-        float point_x = curr_pix_value * (w - cx) / fx;
-        float point_y = curr_pix_value * (h - cy) / fy;
-        int checking_range_in_pix_x = (int)(checking_range_in_meter * fx / curr_pix_value);
-        int checking_range_in_pix_y = (int)(checking_range_in_meter * fy / curr_pix_value);
-        checking_range_in_pix_x = min(checking_range_in_pix_x, checking_range_limit);
-        checking_range_in_pix_y = min(checking_range_in_pix_y, checking_range_limit);
-        int is_not_flying_point_flag = 0;
-        
-        for (unsigned int i = max(0, h-checking_range_in_pix_y); i < min(height, h+checking_range_in_pix_y+1); i++) {
-            int line_i_offset = i * width;
-            for (unsigned int j = max(0, w-checking_range_in_pix_x); j < min(width, w+checking_range_in_pix_x+1); j++) {
-                float checking_pix_value = depth_map_raw[line_i_offset + j];
-                if (checking_pix_value != 0.0) {
-                    float curr_x = checking_pix_value * (j - cx) / fx;
-                    float curr_y = checking_pix_value * (i - cy) / fy;
-                    float x_diff = curr_x - point_x, y_diff = curr_y - point_y, z_diff = curr_pix_value - checking_pix_value;
-                    float distance = (x_diff)*(x_diff) + (y_diff)*(y_diff) + (z_diff)*(z_diff);
-                    if (distance < max_distance*max_distance) is_not_flying_point_flag += 1;
-                }
-            }
-            if (is_not_flying_point_flag > minmum_point_num_in_range) break;
-        }
-        if (is_not_flying_point_flag <= minmum_point_num_in_range) depth_map[current_pix_idx] = 0.0;
-    }
-}
-
-__global__ void depth_avg_filter(float *depth_map, int *height_array, int *width_array, int *depth_avg_filter_max_length, float *depth_avg_filter_unvalid_thres)
-{
-    // a point could be considered as not flying when: points in checking range below max_distance > minmum num 
-    int height = height_array[0];
-    int width = width_array[0];
-    int filter_max_length = depth_avg_filter_max_length[0];
-    float filter_thres = depth_avg_filter_unvalid_thres[0];
-    const float filter_weights[6] = {1.0, 0.8, 0.6, 0.5, 0.4, 0.2};
-
-    int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int h = blockIdx.x / 4;
-    int w = current_pix_idx % width;
-    float curr_pix_value = depth_map[current_pix_idx];
-    if (curr_pix_value != 0) {
-        int line_start_addr_offset = h * width;
-        // horizontal
-        float left_weight = 0.0, right_weight = 0.0, depth_sum = curr_pix_value*filter_weights[0];
-        bool stop_flag = false;
-        for (int i=1; i< filter_max_length+1; i++) {
-            int l_idx = w-i, r_idx = w+i;
-            if(depth_map[line_start_addr_offset+l_idx] != 0 & depth_map[line_start_addr_offset+r_idx] != 0 & l_idx > 0 & r_idx < width & \
-                abs(depth_map[line_start_addr_offset+l_idx] - curr_pix_value) < filter_thres & abs(depth_map[line_start_addr_offset+r_idx] - curr_pix_value) < filter_thres) {
-                left_weight += filter_weights[i];
-                right_weight += filter_weights[i];
-                depth_sum += (depth_map[line_start_addr_offset+r_idx] + depth_map[line_start_addr_offset+l_idx]) * filter_weights[i];
-            }
-            else {
-                stop_flag = true; 
-                break;
-            }
-        }
-        if (!stop_flag) depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
-        __syncthreads();
-        // vertical
-        curr_pix_value = depth_map[current_pix_idx];
-        left_weight = 0.0, right_weight = 0.0, depth_sum = curr_pix_value*filter_weights[0];
-        stop_flag = false;
-        for (int i=1; i< filter_max_length+1; i++) {
-            int l_idx = h-i, r_idx = h+i;
-            if(depth_map[l_idx*width+w] != 0 & depth_map[r_idx*width+w] != 0 & l_idx > 0 & r_idx < height & \
-                abs(depth_map[l_idx*width+w] - curr_pix_value) < filter_thres & abs(depth_map[r_idx*width+w] - curr_pix_value) < filter_thres) {
-                left_weight += filter_weights[i];
-                right_weight += filter_weights[i];
-                depth_sum += (depth_map[r_idx*width+w] + depth_map[l_idx*width+w]) * filter_weights[i];
-            }
-            else {
-                stop_flag = true; 
-                break;
-            }
-        }
-        if (!stop_flag) depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
-    }
-}
-
 __global__ void gen_depth_from_index_matching(float *depth_map, int *height_array, int *width_array, float *img_index_left, float *img_index_right, float *baseline,float *dmap_base,float *fx, float *img_index_left_sub_px,float *img_index_right_sub_px, short *belief_map_l, short *belief_map_r, float *roughly_projector_area_in_image, float *depth_cutoff, int *remove_possibly_outliers_when_matching)
 {
     float depth_cutoff_near = depth_cutoff[0], depth_cutoff_far = depth_cutoff[1];
@@ -318,6 +217,113 @@ __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optim
     }
     else {
         optimized_depth_map[current_pix_idx] = 0.0;
+    }
+}
+
+__global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int *height_array, int *width_array, float *camera_kp, float *depth_filter_max_distance, int *depth_filter_minmum_points_in_checking_range)
+{
+    // a point could be considered as not flying when: points in checking range below max_distance > minmum num 
+    int height = height_array[0];
+    int width = width_array[0];
+    float max_distance = depth_filter_max_distance[0];
+    int minmum_point_num_in_range = depth_filter_minmum_points_in_checking_range[0] + (width / 400) * (width / 400);
+    float checking_range_in_meter = max_distance * 1.2;
+    int checking_range_limit = width/50;
+    float fx = camera_kp[0];
+    float cx = camera_kp[2];
+    float fy = camera_kp[1*3+1];
+    float cy = camera_kp[1*3+2];
+
+    int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int h = blockIdx.x / 4;
+    int w = current_pix_idx % width;
+    float curr_pix_value = depth_map_raw[current_pix_idx];
+    depth_map[current_pix_idx] = curr_pix_value;
+
+    if (curr_pix_value != 0) {
+        float point_x = curr_pix_value * (w - cx) / fx;
+        float point_y = curr_pix_value * (h - cy) / fy;
+        int checking_range_in_pix_x = (int)(checking_range_in_meter * fx / curr_pix_value);
+        int checking_range_in_pix_y = (int)(checking_range_in_meter * fy / curr_pix_value);
+        checking_range_in_pix_x = min(checking_range_in_pix_x, checking_range_limit);
+        checking_range_in_pix_y = min(checking_range_in_pix_y, checking_range_limit);
+        int is_not_flying_point_flag = 0;
+        
+        for (unsigned int i = max(0, h-checking_range_in_pix_y); i < min(height, h+checking_range_in_pix_y+1); i++) {
+            int line_i_offset = i * width;
+            for (unsigned int j = max(0, w-checking_range_in_pix_x); j < min(width, w+checking_range_in_pix_x+1); j++) {
+                float checking_pix_value = depth_map_raw[line_i_offset + j];
+                float z_diff = abs(curr_pix_value - checking_pix_value);
+                if (checking_pix_value != 0.0 & z_diff < max_distance) {
+                    ///// more strict checking, slower
+                    // float curr_x = checking_pix_value * (j - cx) / fx;
+                    // float curr_y = checking_pix_value * (i - cy) / fy;
+                    // float x_diff = curr_x - point_x, y_diff = curr_y - point_y;
+                    // float distance = (x_diff)*(x_diff) + (y_diff)*(y_diff) + (z_diff)*(z_diff);
+                    // if (distance < max_distance*max_distance) is_not_flying_point_flag += 1;
+                    ///// fast checking
+                    ///// will save about 85% time compared with more strict distance checking, while can still remove most of the flying pts.
+                    is_not_flying_point_flag += 1; 
+                }
+            }
+            if (is_not_flying_point_flag > minmum_point_num_in_range) break;
+        }
+        if (is_not_flying_point_flag <= minmum_point_num_in_range) depth_map[current_pix_idx] = 0.0;
+    }
+}
+
+__global__ void depth_avg_filter(float *depth_map, int *height_array, int *width_array, int *depth_avg_filter_max_length, float *depth_avg_filter_unvalid_thres)
+{
+    // a point could be considered as not flying when: points in checking range below max_distance > minmum num 
+    int height = height_array[0];
+    int width = width_array[0];
+    int filter_max_length = depth_avg_filter_max_length[0];
+    float filter_thres = depth_avg_filter_unvalid_thres[0];
+    const float filter_weights[6] = {1.0, 0.8, 0.6, 0.5, 0.4, 0.2};
+
+    int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int h = blockIdx.x / 4;
+    int w = current_pix_idx % width;
+    float curr_pix_value = depth_map[current_pix_idx];
+    if (curr_pix_value != 0) {
+        int line_start_addr_offset = h * width;
+        // horizontal
+        float left_weight = 0.0, right_weight = 0.0, depth_sum = curr_pix_value*filter_weights[0];
+        bool stop_flag = false;
+        for (int i=1; i< filter_max_length+1; i++) {
+            int l_idx = w-i, r_idx = w+i;
+            if(depth_map[line_start_addr_offset+l_idx] != 0 & depth_map[line_start_addr_offset+r_idx] != 0 & l_idx > 0 & r_idx < width & \
+                abs(depth_map[line_start_addr_offset+l_idx] - curr_pix_value) < filter_thres & abs(depth_map[line_start_addr_offset+r_idx] - curr_pix_value) < filter_thres) {
+                left_weight += filter_weights[i];
+                right_weight += filter_weights[i];
+                depth_sum += (depth_map[line_start_addr_offset+r_idx] + depth_map[line_start_addr_offset+l_idx]) * filter_weights[i];
+            }
+            else {
+                stop_flag = true; 
+                break;
+            }
+        }
+        if (!stop_flag) depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
+        __threadfence();  // make sure the modification to depth_map is visiable for all other threads
+        __syncthreads();
+        // vertical
+        curr_pix_value = depth_map[current_pix_idx];
+        left_weight = 0.0, right_weight = 0.0, depth_sum = curr_pix_value*filter_weights[0];
+        stop_flag = false;
+        for (int i=1; i< filter_max_length+1; i++) {
+            int l_idx = h-i, r_idx = h+i;
+            if(depth_map[l_idx*width+w] != 0 & depth_map[r_idx*width+w] != 0 & l_idx > 0 & r_idx < height & \
+                abs(depth_map[l_idx*width+w] - curr_pix_value) < filter_thres & abs(depth_map[r_idx*width+w] - curr_pix_value) < filter_thres) {
+                left_weight += filter_weights[i];
+                right_weight += filter_weights[i];
+                depth_sum += (depth_map[r_idx*width+w] + depth_map[l_idx*width+w]) * filter_weights[i];
+            }
+            else {
+                stop_flag = true; 
+                break;
+            }
+        }
+        if (!stop_flag) depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
     }
 }
 
