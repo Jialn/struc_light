@@ -1,4 +1,22 @@
 
+-WorkPC
+alloc gpu mem and copy src images into gpu: 0.007 s
+gray code decoding: 0.003 s
+phase decoding: 0.000 s
+rectify: 0.000 s
+- left decoding total: 0.012 s
+alloc gpu mem and copy src images into gpu: 0.007 s
+gray code decoding: 0.003 s
+phase decoding: 0.000 s
+rectify: 0.000 s
+- left and right decoding in total: 0.024 s
+index matching and depth map generating: 0.028 s  ***
+subpix optimize: 0.001 s
+flying point filter: 0.022 s  **
+depth avg filter: 0.000 s
+readout from gpu: 0.004 s
+- Total time without reading imgs and pre-built rectify maps: 0.080 s
+
 
 -HomePC:
 alloc gpu mem and copy src images into gpu: 0.011 s

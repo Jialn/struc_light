@@ -391,8 +391,8 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     height, width = img_index_left.shape[:2]
     baseline = np.linalg.norm(cam_transform)  # * ( 0.8/(0.8+0.05*0.001) )  # = 0.9999375039060059
     ### Infer DepthMap from Index Matching
-    unoptimized_depth_map = np.empty_like(img_index_left, dtype=np.float32)
-    depth_map = np.empty_like(img_index_left, dtype=np.float32)
+    unoptimized_depth_map = np.zeros_like(img_index_left, dtype=np.float32)
+    depth_map = np.zeros_like(img_index_left, dtype=np.float32)
     start_time = time.time()
     gen_depth_from_index_matching(unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right)
     print("index matching and depth map generating: %.3f s" % (time.time() - start_time))

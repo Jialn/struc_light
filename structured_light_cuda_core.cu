@@ -59,21 +59,6 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
     img_index[idx] = ! need_outliers_checking_flag;  //reuse img_index as belief map
 }
 
-__global__ void rectify_phase(float *img_phase, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, float *sub_pixel_map_x)
-{   //rectify_map is, for each pixel (u,v) in the destination (corrected and rectified) image, the corresponding coordinates in the source image (that is, in the original image from camera)
-    int height = height_array[0];
-    int width = width_array[0];
-    int idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int w = idx % width;
-    float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
-    if (src_x <= 0.0) src_x = 0.0;
-    if (src_x >= width-1) src_x = width-1;
-    if (src_y <= 0.0) src_y = 0.0;
-    if (src_y >= height-1) src_y = height-1;
-    rectified_img_phase[idx] = img_phase[int(src_y+0.5), int(src_x+0.5)];
-    sub_pixel_map_x[idx] = w + (int(src_x+0.5) - src_x);
-}
-
 __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, short *rectified_bfmap, float *sub_pixel_map_x)
 {
     int width = width_array[0];
@@ -104,28 +89,32 @@ __global__ void depth_filter(float *depth_map, float *depth_map_raw, int *height
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
     int h = blockIdx.x / 4;
     int w = current_pix_idx % width;
-    depth_map[current_pix_idx] = depth_map_raw[current_pix_idx];
+    float curr_pix_value = depth_map_raw[current_pix_idx];
+    depth_map[current_pix_idx] = curr_pix_value;
 
-    if (depth_map_raw[current_pix_idx] != 0) {
-        float point_x = depth_map_raw[current_pix_idx] * (w - cx) / fx;
-        float point_y = depth_map_raw[current_pix_idx] * (h - cy) / fy;
-        int checking_range_in_pix_x = (int)(checking_range_in_meter * fx / depth_map_raw[current_pix_idx]);
-        int checking_range_in_pix_y = (int)(checking_range_in_meter * fy / depth_map_raw[current_pix_idx]);
+    if (curr_pix_value != 0) {
+        float point_x = curr_pix_value * (w - cx) / fx;
+        float point_y = curr_pix_value * (h - cy) / fy;
+        int checking_range_in_pix_x = (int)(checking_range_in_meter * fx / curr_pix_value);
+        int checking_range_in_pix_y = (int)(checking_range_in_meter * fy / curr_pix_value);
         checking_range_in_pix_x = min(checking_range_in_pix_x, checking_range_limit);
         checking_range_in_pix_y = min(checking_range_in_pix_y, checking_range_limit);
         int is_not_flying_point_flag = 0;
         
         for (unsigned int i = max(0, h-checking_range_in_pix_y); i < min(height, h+checking_range_in_pix_y+1); i++) {
+            int line_i_offset = i * width;
             for (unsigned int j = max(0, w-checking_range_in_pix_x); j < min(width, w+checking_range_in_pix_x+1); j++) {
-                int pix_ij_idx = i*width + j;
-                float curr_x = depth_map_raw[pix_ij_idx] * (j - cx) / fx;
-                float curr_y = depth_map_raw[pix_ij_idx] * (i - cy) / fy;
-                float distance = (curr_x - point_x)*(curr_x - point_x) + (curr_y - point_y)*(curr_y - point_y) + (depth_map_raw[current_pix_idx] - depth_map_raw[pix_ij_idx])*(depth_map_raw[current_pix_idx] - depth_map_raw[pix_ij_idx]);
-                if (distance < max_distance*max_distance) is_not_flying_point_flag += 1;
-                if (is_not_flying_point_flag > minmum_point_num_in_range) break;
+                float checking_pix_value = depth_map_raw[line_i_offset + j];
+                if (checking_pix_value != 0.0) {
+                    float curr_x = checking_pix_value * (j - cx) / fx;
+                    float curr_y = checking_pix_value * (i - cy) / fy;
+                    float x_diff = curr_x - point_x, y_diff = curr_y - point_y, z_diff = curr_pix_value - checking_pix_value;
+                    float distance = (x_diff)*(x_diff) + (y_diff)*(y_diff) + (z_diff)*(z_diff);
+                    if (distance < max_distance*max_distance) is_not_flying_point_flag += 1;
+                }
             }
+            if (is_not_flying_point_flag > minmum_point_num_in_range) break;
         }
-        
         if (is_not_flying_point_flag <= minmum_point_num_in_range) depth_map[current_pix_idx] = 0.0;
     }
 }
@@ -142,18 +131,19 @@ __global__ void depth_avg_filter(float *depth_map, int *height_array, int *width
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
     int h = blockIdx.x / 4;
     int w = current_pix_idx % width;
-
-    if (depth_map[current_pix_idx] != 0) {
+    float curr_pix_value = depth_map[current_pix_idx];
+    if (curr_pix_value != 0) {
+        int line_start_addr_offset = h * width;
         // horizontal
-        float left_weight = 0.0, right_weight = 0.0, depth_sum = depth_map[current_pix_idx]*filter_weights[0];
+        float left_weight = 0.0, right_weight = 0.0, depth_sum = curr_pix_value*filter_weights[0];
         bool stop_flag = false;
         for (int i=1; i< filter_max_length+1; i++) {
             int l_idx = w-i, r_idx = w+i;
-            if(depth_map[h*width+l_idx] != 0 & depth_map[h*width+r_idx] != 0 & l_idx > 0 & r_idx < width & \
-                abs(depth_map[h*width+l_idx] - depth_map[current_pix_idx]) < filter_thres & abs(depth_map[h*width+r_idx] - depth_map[current_pix_idx]) < filter_thres) {
+            if(depth_map[line_start_addr_offset+l_idx] != 0 & depth_map[line_start_addr_offset+r_idx] != 0 & l_idx > 0 & r_idx < width & \
+                abs(depth_map[line_start_addr_offset+l_idx] - curr_pix_value) < filter_thres & abs(depth_map[line_start_addr_offset+r_idx] - curr_pix_value) < filter_thres) {
                 left_weight += filter_weights[i];
                 right_weight += filter_weights[i];
-                depth_sum += (depth_map[h*width+r_idx] + depth_map[h*width+l_idx]) * filter_weights[i];
+                depth_sum += (depth_map[line_start_addr_offset+r_idx] + depth_map[line_start_addr_offset+l_idx]) * filter_weights[i];
             }
             else {
                 stop_flag = true; 
@@ -163,12 +153,13 @@ __global__ void depth_avg_filter(float *depth_map, int *height_array, int *width
         if (!stop_flag) depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
         __syncthreads();
         // vertical
-        left_weight = 0.0, right_weight = 0.0, depth_sum = depth_map[current_pix_idx]*filter_weights[0];
+        curr_pix_value = depth_map[current_pix_idx];
+        left_weight = 0.0, right_weight = 0.0, depth_sum = curr_pix_value*filter_weights[0];
         stop_flag = false;
         for (int i=1; i< filter_max_length+1; i++) {
             int l_idx = h-i, r_idx = h+i;
             if(depth_map[l_idx*width+w] != 0 & depth_map[r_idx*width+w] != 0 & l_idx > 0 & r_idx < height & \
-                abs(depth_map[l_idx*width+w] - depth_map[current_pix_idx]) < filter_thres & abs(depth_map[r_idx*width+w] - depth_map[current_pix_idx]) < filter_thres) {
+                abs(depth_map[l_idx*width+w] - curr_pix_value) < filter_thres & abs(depth_map[r_idx*width+w] - curr_pix_value) < filter_thres) {
                 left_weight += filter_weights[i];
                 right_weight += filter_weights[i];
                 depth_sum += (depth_map[r_idx*width+w] + depth_map[l_idx*width+w]) * filter_weights[i];
@@ -197,11 +188,12 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     int thread_working_length = width / blockDim.x;
     int w_start = threadIdx.x * thread_working_length;
     int w_end = w_start + thread_working_length;
-    float *line_r = img_index_right + h * width;
-    float *line_l = img_index_left + h * width;
+    int line_start_addr_offset = h * width;
+    float *line_r = img_index_right + line_start_addr_offset;
+    float *line_l = img_index_left + line_start_addr_offset;
     int last_right_corres_point = -1;
     for (int w = w_start; w < w_end; w++) {
-        int curr_pix_idx = h*width + w;
+        int curr_pix_idx = line_start_addr_offset + w;
         depth_map[curr_pix_idx] = 0.0;
         if (isnan(line_l[w])) {
             last_right_corres_point = -1;
@@ -251,7 +243,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         // get the interpo right index 'w_r'
         float w_r = 0;
         float left_pos = line_r[most_corres_pts_l], right_pos = line_r[most_corres_pts_r];
-        float left_value = img_index_right_sub_px[h*width+most_corres_pts_l], right_value = img_index_right_sub_px[h*width+most_corres_pts_r];
+        float left_value = img_index_right_sub_px[line_start_addr_offset+most_corres_pts_l], right_value = img_index_right_sub_px[line_start_addr_offset+most_corres_pts_r];
         if ((cnt_l != 0) & (cnt_r != 0)) {
             if (right_pos-left_pos != 0) w_r = left_value + (right_value-left_value) * (line_l[w]-left_pos)/(right_pos-left_pos);
             else w_r = left_value;
@@ -260,7 +252,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         else                    w_r = right_value;
         // check possiblely outliers using max_allow_pixel_per_index and belief_map
         bool outliers_flag = false;
-        if (check_outliers==true & belief_map_r[h*width+(int)(w_r+0.5)]==0) {
+        if (check_outliers==true & belief_map_r[line_start_addr_offset+(int)(w_r+0.5)]==0) {
             if (abs((float)(most_corres_pts_l-w_r)) > max_allow_pixel_per_index) outliers_flag = true;
             if (abs((float)(most_corres_pts_r-w_r)) > max_allow_pixel_per_index) outliers_flag = true;
         }

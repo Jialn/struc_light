@@ -292,6 +292,8 @@ if __name__ == "__main__":
     
     rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
+    gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
+    gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     
     def report_depth_error(depth_img, depth_gt):
         gray_img = cv2.imread(image_path + str(default_image_seq_start_index) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
