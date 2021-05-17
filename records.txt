@@ -1,3 +1,30 @@
+
+-WorkPC
+alloc gpu mem and copy src images into gpu: 0.007 s
+gray code decoding: 0.003 s
+phase decoding: 0.001 s
+rectify: 0.001 s
+- left decoding total: 0.013 s
+alloc gpu mem and copy src images into gpu: 0.007 s
+gray code decoding: 0.003 s
+phase decoding: 0.001 s
+rectify: 0.001 s
+- left and right decoding in total: 0.026 s
+index matching and depth map generating: 0.021 s
+subpix optimize: 0.001 s
+flying point filter: 0.002 s
+depth avg filter: 0.000 s
+readout from gpu: 0.004 s
+- Total time: 0.172 s
+- Total time without reading imgs and pre-built rectify maps: 0.054 s
+valid points rate below 10mm: 2922063/3121565, 93.60891091487764%
+average_error(mm):0.11484864
+valid points rate below 1mm: 2907827/3121565, 93.15285762109711%
+average_error(mm):0.101767056
+valid points rate below 0.25mm: 2783435/3121565, 89.16793339238491%
+average_error(mm):0.09042698
+------------------------------------------------------
+
 -WorkPC
 alloc gpu mem and copy src images into gpu: 0.007 s
 gray code decoding: 0.003 s
@@ -16,6 +43,12 @@ depth avg filter: 0.000 s
 readout from gpu: 0.004 s
 - Total time: 0.181 s
 - Total time without reading imgs and pre-built rectify maps: 0.070 s
+valid points rate below 10mm: 2922072/3121565, 93.60919923179559%
+average_error(mm):0.11519137
+valid points rate below 1mm: 2907743/3121565, 93.15016666319619%
+average_error(mm):0.10208158
+valid points rate below 0.25mm: 2781250/3121565, 89.09793645174776%
+average_error(mm):0.090455316
 
 ------------------------------------------------------
 -WorkPC
@@ -35,8 +68,15 @@ flying point filter: 0.022 s  **
 depth avg filter: 0.000 s
 readout from gpu: 0.004 s
 - Total time without reading imgs and pre-built rectify maps: 0.080 s
+valid points rate below 10mm: 2921024/3121565, 93.57562632846025%
 
+average_error(mm):0.11456066
+valid points rate below 1mm: 2907056/3121565, 93.12815847179219%
+average_error(mm):0.10201788
+valid points rate below 0.25mm: 2780911/3121565, 89.08707651450474%
+average_error(mm):0.09044368
 
+---------------------------------------------------
 -HomePC:
 alloc gpu mem and copy src images into gpu: 0.011 s
 gray code decoding: 0.003 s

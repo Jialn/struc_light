@@ -107,31 +107,31 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
             checking_right_edge = last_right_corres_point + right_corres_point_offset_range;
             if (checking_left_edge <=0) checking_left_edge=0;
             if (checking_right_edge >=width) checking_right_edge=width;
-        }
-        for (int i=checking_left_edge; i < checking_right_edge; i++) {
-            if (isnan(line_r[i])) continue;
-            if ((line_l[w]-max_index_offset_when_matching <= line_r[i]) & (line_r[i] <= line_l[w])) {
-                if (most_corres_pts_l==-1) most_corres_pts_l = i;
-                else if (line_l[w] - line_r[i] <= line_l[w] - line_r[most_corres_pts_l]) most_corres_pts_l = i;
-                cnt_l += 1;
-            }
-            if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+max_index_offset_when_matching)) {
-                if (most_corres_pts_r==-1) most_corres_pts_r = i;
-                else if (line_r[i] - line_l[w] <= line_r[most_corres_pts_r] - line_l[w]) most_corres_pts_r = i;
-                cnt_r += 1;
-            }
-        }
-        if (cnt_l == 0 & cnt_r == 0) { // expand the searching range and try again
-            for (int i=0; i < width; i++) { 
+            for (int i=checking_left_edge; i < checking_right_edge; i++) {  // fast checking around last_right_corres_point
                 if (isnan(line_r[i])) continue;
-                if ((line_l[w]-max_index_offset_when_matching_ex <= line_r[i]) & (line_r[i] <= line_l[w])) {
+                else if ((line_l[w]-max_index_offset_when_matching <= line_r[i]) & (line_r[i] <= line_l[w])) {
                     if (most_corres_pts_l==-1) most_corres_pts_l = i;
-                    else if (line_l[w] - line_r[i] <= line_l[w] - line_r[most_corres_pts_l]) most_corres_pts_l = i;
+                    else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
                     cnt_l += 1;
                 }
-                if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+max_index_offset_when_matching_ex)) {
+                else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+max_index_offset_when_matching)) {
                     if (most_corres_pts_r==-1) most_corres_pts_r = i;
-                    else if (line_r[i] - line_l[w] <= line_r[most_corres_pts_r] - line_l[w]) most_corres_pts_r = i;
+                    else if (line_r[i] <= line_r[most_corres_pts_r]) most_corres_pts_r = i;
+                    cnt_r += 1;
+                }
+            }
+        }
+        if (cnt_l == 0 & cnt_r == 0) { // last_right_corres_point is -1 or not found around it, expand the searching range and try searching
+            for (int i=0; i < width; i++) { 
+                if (isnan(line_r[i])) continue;
+                else if ((line_l[w]-max_index_offset_when_matching_ex <= line_r[i]) & (line_r[i] <= line_l[w])) {
+                    if (most_corres_pts_l==-1) most_corres_pts_l = i;
+                    else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
+                    cnt_l += 1;
+                }
+                else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+max_index_offset_when_matching_ex)) {
+                    if (most_corres_pts_r==-1) most_corres_pts_r = i;
+                    else if (line_r[i] <= line_r[most_corres_pts_r]) most_corres_pts_r = i;
                     cnt_r += 1;
                 }
             }
@@ -223,6 +223,9 @@ __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optim
 __global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int *height_array, int *width_array, float *camera_kp, float *depth_filter_max_distance, int *depth_filter_minmum_points_in_checking_range)
 {
     // a point could be considered as not flying when: points in checking range below max_distance > minmum num 
+    const bool use_3d_distance = false; // use 3D distance (slower but more precisely) or only distance of axis-z to check flying points
+                                        // setting to false will save above 95% time compared with 3D distance checking, while can still remove most of the flying pts.
+                                        // an example (3d vs only_z): render0000_2k avg error @ 10 mm thres: 0.1145mm vs 0.1152mm; cost time: 17ms vs 1ms; total time 80ms vs 66ms
     int height = height_array[0];
     int width = width_array[0];
     float max_distance = depth_filter_max_distance[0];
@@ -255,15 +258,14 @@ __global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int
                 float checking_pix_value = depth_map_raw[line_i_offset + j];
                 float z_diff = abs(curr_pix_value - checking_pix_value);
                 if (checking_pix_value != 0.0 & z_diff < max_distance) {
-                    ///// more strict checking, slower
-                    // float curr_x = checking_pix_value * (j - cx) / fx;
-                    // float curr_y = checking_pix_value * (i - cy) / fy;
-                    // float x_diff = curr_x - point_x, y_diff = curr_y - point_y;
-                    // float distance = (x_diff)*(x_diff) + (y_diff)*(y_diff) + (z_diff)*(z_diff);
-                    // if (distance < max_distance*max_distance) is_not_flying_point_flag += 1;
-                    ///// fast checking
-                    ///// will save about 85% time compared with more strict distance checking, while can still remove most of the flying pts.
-                    is_not_flying_point_flag += 1; 
+                    if (use_3d_distance) {
+                        float curr_x = checking_pix_value * (j - cx) / fx;
+                        float curr_y = checking_pix_value * (i - cy) / fy;
+                        float x_diff = curr_x - point_x, y_diff = curr_y - point_y;
+                        float distance = (x_diff)*(x_diff) + (y_diff)*(y_diff) + (z_diff)*(z_diff);
+                        if (distance < max_distance*max_distance) is_not_flying_point_flag += 1;
+                    }
+                    else is_not_flying_point_flag += 1; 
                 }
             }
             if (is_not_flying_point_flag > minmum_point_num_in_range) break;
