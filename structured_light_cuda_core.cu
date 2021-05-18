@@ -53,8 +53,8 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
     float phase = - atan2f(i4-i2, i3-i1) + pi;
     int phase_main_index = img_index[idx] / 2 ;
     int phase_sub_index = img_index[idx] & 0x01;
-    if((phase_sub_index == 0) && (phase > pi*1.5))  phase -= 2.0*pi; 
-    if((phase_sub_index == 1) && (phase < pi*0.5))  phase += 2.0*pi; 
+    if((phase_sub_index == 0) & (phase > pi*1.5))  phase -= 2.0*pi; 
+    if((phase_sub_index == 1) & (phase < pi*0.5))  phase += 2.0*pi; 
     img_phase[idx] = phase_main_index * phsift_pattern_period_per_pixel + (phase * phsift_pattern_period_per_pixel / (2*pi));
     img_index[idx] = ! need_outliers_checking_flag;  //reuse img_index as belief map
 }
@@ -99,7 +99,6 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
             continue;
         }
         // find the nearest left and right corresponding points in right image
-        int cnt_l = 0, cnt_r = 0;
         int most_corres_pts_l = -1, most_corres_pts_r = -1;
         int checking_left_edge = 0, checking_right_edge = width;
         if (last_right_corres_point > 0) {
@@ -112,50 +111,46 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
                 else if ((line_l[w]-max_index_offset_when_matching <= line_r[i]) & (line_r[i] <= line_l[w])) {
                     if (most_corres_pts_l==-1) most_corres_pts_l = i;
                     else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
-                    cnt_l += 1;
                 }
                 else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+max_index_offset_when_matching)) {
                     if (most_corres_pts_r==-1) most_corres_pts_r = i;
                     else if (line_r[i] <= line_r[most_corres_pts_r]) most_corres_pts_r = i;
-                    cnt_r += 1;
                 }
             }
         }
-        if (cnt_l == 0 & cnt_r == 0) { // last_right_corres_point is -1 or not found around it, expand the searching range and try searching
+        // last_right_corres_point is invalid or not found most_corres_pts, expand the searching range and try searching again
+        if (most_corres_pts_l == -1 & most_corres_pts_r == -1) {
             for (int i=0; i < width; i++) { 
                 if (isnan(line_r[i])) continue;
                 else if ((line_l[w]-max_index_offset_when_matching_ex <= line_r[i]) & (line_r[i] <= line_l[w])) {
                     if (most_corres_pts_l==-1) most_corres_pts_l = i;
                     else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
-                    cnt_l += 1;
                 }
                 else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+max_index_offset_when_matching_ex)) {
                     if (most_corres_pts_r==-1) most_corres_pts_r = i;
                     else if (line_r[i] <= line_r[most_corres_pts_r]) most_corres_pts_r = i;
-                    cnt_r += 1;
                 }
             }
         }
-        if (cnt_l == 0 & cnt_r == 0) continue;
-        if (most_corres_pts_l==-1) most_corres_pts_l = most_corres_pts_r;
-        else if (most_corres_pts_r==-1) most_corres_pts_r = most_corres_pts_l;
-        // get the interpo right index 'w_r'
+        // get the right index
         float w_r = 0;
-        float left_pos = line_r[most_corres_pts_l], right_pos = line_r[most_corres_pts_r];
-        float left_value = img_index_right_sub_px[line_start_addr_offset+most_corres_pts_l], right_value = img_index_right_sub_px[line_start_addr_offset+most_corres_pts_r];
-        if ((cnt_l != 0) & (cnt_r != 0)) {
+        bool outliers_flag = false;
+        if (most_corres_pts_l == -1 & most_corres_pts_r == -1) continue;
+        else if (most_corres_pts_l==-1) w_r = img_index_right_sub_px[line_start_addr_offset+most_corres_pts_r]+0.2; // add 0.2 pix offset as we know it's on the right side
+        else if (most_corres_pts_r==-1) w_r = img_index_right_sub_px[line_start_addr_offset+most_corres_pts_l]-0.2;
+        else {
+            // get the interpo right index 'w_r'
+            float left_pos = line_r[most_corres_pts_l], right_pos = line_r[most_corres_pts_r];
+            float left_value = img_index_right_sub_px[line_start_addr_offset+most_corres_pts_l], right_value = img_index_right_sub_px[line_start_addr_offset+most_corres_pts_r];
             if (right_pos-left_pos != 0) w_r = left_value + (right_value-left_value) * (line_l[w]-left_pos)/(right_pos-left_pos);
             else w_r = left_value;
+            // check possiblely outliers using max_allow_pixel_per_index and belief_map
+            if (check_outliers==true & belief_map_r[line_start_addr_offset+(int)(w_r+0.5)]==0) {
+                if (abs((float)(most_corres_pts_l-w_r)) > max_allow_pixel_per_index) outliers_flag = true;
+                if (abs((float)(most_corres_pts_r-w_r)) > max_allow_pixel_per_index) outliers_flag = true;
+            }
+            if (outliers_flag==true) continue;
         }
-        else if (cnt_l != 0)    w_r = left_value;
-        else                    w_r = right_value;
-        // check possiblely outliers using max_allow_pixel_per_index and belief_map
-        bool outliers_flag = false;
-        if (check_outliers==true & belief_map_r[line_start_addr_offset+(int)(w_r+0.5)]==0) {
-            if (abs((float)(most_corres_pts_l-w_r)) > max_allow_pixel_per_index) outliers_flag = true;
-            if (abs((float)(most_corres_pts_r-w_r)) > max_allow_pixel_per_index) outliers_flag = true;
-        }
-        if (outliers_flag==true) continue;
         last_right_corres_point = (int)(w_r+0.5);
         // get left index
         float w_l = img_index_left_sub_px[curr_pix_idx];
