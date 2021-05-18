@@ -20,7 +20,7 @@ depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
 depth_filter_max_distance = 0.005 # about 5-7 times of resolution per pxiel
 depth_filter_minmum_points_in_checking_range = 2  # including the point itsself, will also add a ratio of width // 400
 use_depth_avg_filter = True
-depth_avg_filter_max_length = 2   # 4, from 0 - 6
+depth_avg_filter_max_length = 3   # 4, from 0 - 6
 depth_avg_filter_unvalid_thres = 0.001  # 0.002
 
 roughly_projector_area_in_image = 0.8  # the roughly prjector area in image / image width, e.g., 0.75, 1.0, 1.25
@@ -73,7 +73,7 @@ def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left,
         img_index_left_sub_px, img_index_right_sub_px, belief_map_left,belief_map_right, 
         cuda.In(np.float32(roughly_projector_area_in_image)), cuda.In(np.float32([depth_cutoff_near, depth_cutoff_far])),
         cuda.In(np.int32(remove_possibly_outliers_when_matching)),
-        block=(48*9, 1, 1), grid=(height, 1))
+        block=(width//6, 1, 1), grid=(height, 1))
 
 def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px):
     optimize_dmap_using_sub_pixel_map_cuda_kernel(unoptimized_depth_map,depth_map,
@@ -103,6 +103,11 @@ def depth_avg_filter_cuda(depth_map, height, width):
 # print("running time: %.4f s" % ((time.time() - start_time)/3))
 # # print(dest-a*b)
 # exit()
+
+def from_gpu(gpu_data, size_sample, dtype):
+    nd_array = np.empty_like(size_sample, dtype)
+    cuda.memcpy_dtoh(nd_array, gpu_data)
+    return nd_array
 
 ### the index decoding part
 global_reading_img_time = 0
@@ -155,7 +160,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
         cuda.memcpy_htod(gpu_remap_x_right, rectify_map_x_right)
         cuda.memcpy_htod(gpu_remap_y_right, rectify_map_y_right)
     prj_valid_map = prj_area_posi - prj_area_nega
-    thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, unvalid_thres, 255, cv2.THRESH_BINARY)
+    thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, max(2*unvalid_thres, phase_decoding_unvalid_thres), 255, cv2.THRESH_BINARY)
     if img_phase is None:
         img_phase = cuda.mem_alloc(prj_valid_map.nbytes*4)  # float32
         img_index = cuda.mem_alloc(prj_valid_map.nbytes*2)  # int16
@@ -181,7 +186,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
     gray_decode_cuda(images_gray_src, prj_area_posi, prj_area_nega, prj_valid_map_bin, len(images_graycode), height,width, img_index, unvalid_thres)
     print("gray code decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res and res_path is not None:
-        mid_res_corse_gray_index_raw = img_index // 2
+        mid_res_corse_gray_index_raw = from_gpu(img_index, size_sample=prj_valid_map, dtype=np.int16) // 2
         mid_res_corse_gray_index = np.clip(mid_res_corse_gray_index_raw * 80 % 255, 0, 255).astype(np.uint8)
         cv2.imwrite(res_path + "/mid_res_corse_gray_index" + appendix, mid_res_corse_gray_index)
   
@@ -198,7 +203,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
     print("rectify: %.3f s" % (time.time() - start_time))
 
     if save_mid_res:
-        mid_res_wrapped_phase = (img_phase - mid_res_corse_gray_index_raw * phsift_pattern_period_per_pixel) / phsift_pattern_period_per_pixel
+        mid_res_wrapped_phase = (from_gpu(img_phase, size_sample=prj_valid_map, dtype=np.float32) - mid_res_corse_gray_index_raw * phsift_pattern_period_per_pixel) / phsift_pattern_period_per_pixel
         mid_res_wrapped_phase = (mid_res_wrapped_phase * 254.0)
         cv2.imwrite(res_path + "/mid_res_wrapped_phase"+appendix, mid_res_wrapped_phase.astype(np.uint8))
 
@@ -257,16 +262,15 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     global_reading_img_time = 0
     ### Save Mid Results for visualizing
     if save_mid_res_for_visulize:   
-        depth_map_uint16 = depth_map * 30
+        depth_map_uint16 = depth_map * 30  # mili-meter
         cv2.imwrite(res_path + '/depth_alg2.png', depth_map_uint16.astype(np.uint16), [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
-        depth_map_raw = np.empty_like(gray_left, dtype=np.float32)
-        cuda.memcpy_dtoh(depth_map_raw, gpu_depth_map_raw)
-        depth_map_raw_uint16 = depth_map_raw * 30
+        depth_map_raw = from_gpu(gpu_depth_map_raw, size_sample=gray_left, dtype=np.float32)
+        depth_map_raw_uint16 = depth_map_raw * 30000  # meter
         cv2.imwrite(res_path + '/depth_alg2_raw.png', depth_map_raw_uint16.astype(np.uint16), [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
-        belief_map_left = np.clip(belief_map_left * 255, 0, 255).astype(np.uint8)
-        belief_map_right = np.clip(belief_map_right * 255, 0, 255).astype(np.uint8)
-        images_phsft_left_v = np.clip(img_index_left/4.0, 0, 255).astype(np.uint8)
-        images_phsft_right_v = np.clip(img_index_right/4.0, 0, 255).astype(np.uint8)
+        belief_map_left = np.clip(from_gpu(belief_map_left, size_sample=gray_left, dtype=np.uint16) * 255, 0, 255).astype(np.uint8)
+        belief_map_right = np.clip(from_gpu(belief_map_right, size_sample=gray_left, dtype=np.uint16) * 255, 0, 255).astype(np.uint8)
+        images_phsft_left_v = (from_gpu(img_index_left, size_sample=gray_left, dtype=np.float32)*4.0).astype(np.uint8)
+        images_phsft_right_v = (from_gpu(img_index_right, size_sample=gray_left, dtype=np.float32)*4.0).astype(np.uint8)
         cv2.imwrite(res_path + "/belief_map_left.png", belief_map_left)
         cv2.imwrite(res_path + "/belief_map_right.png", belief_map_right)
         cv2.imwrite(res_path + "/ph_correspondence_l.png", images_phsft_left_v)
@@ -319,16 +323,16 @@ if __name__ == "__main__":
         print("average_error(mm):" + str(np.average(abs(error_img))))
 
         # write error map
-        error_map_thres = 0.25
-        unvalid_points = np.where(depth_img<=1.0)
-        diff = depth_img - depth_gt
-        depth_img_show_error = (depth_img * 255.0 / 2000.0).astype(np.uint8)
-        error_part = depth_img_show_error.copy()
-        error_part[np.where((diff>error_map_thres)|(diff<-error_map_thres))] = 255
-        error_part[unvalid_points] = 0
-        depth_img_show_error = cv2.cvtColor(depth_img_show_error, cv2.COLOR_GRAY2RGB)
-        depth_img_show_error[:,:,2] = error_part
-        cv2.imwrite(res_path + "/error_map.png", depth_img_show_error)
+        # error_map_thres = 0.25
+        # unvalid_points = np.where(depth_img<=1.0)
+        # diff = depth_img - depth_gt
+        # depth_img_show_error = (depth_img * 255.0 / 2000.0).astype(np.uint8)
+        # error_part = depth_img_show_error.copy()
+        # error_part[np.where((diff>error_map_thres)|(diff<-error_map_thres))] = 255
+        # error_part[unvalid_points] = 0
+        # depth_img_show_error = cv2.cvtColor(depth_img_show_error, cv2.COLOR_GRAY2RGB)
+        # depth_img_show_error[:,:,2] = error_part
+        # cv2.imwrite(res_path + "/error_map.png", depth_img_show_error)
 
     if os.path.exists(image_path + "depth_gt.exr"):
         gt_depth = cv2.imread(image_path + "depth_gt.exr", cv2.IMREAD_UNCHANGED)[:,:,0]
@@ -336,6 +340,9 @@ if __name__ == "__main__":
         rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
         gt_depth_rectified = rectifier.rectify_image(gt_depth) #, interpolation=cv2.INTER_NEAREST
         report_depth_error(depth_map_mm, gt_depth_rectified)
+    else:
+        valid_points = np.where(depth_map_mm>=1.0)
+        print("valid points: " + str(len(valid_points[0])))
     
     ### build point cloud and visualize
     if visulize_res:
