@@ -321,18 +321,18 @@ if __name__ == "__main__":
         error_img = error_img[np.where((error_img<0.25)&(error_img>-0.25))]
         print("valid points rate below 0.25mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
         print("average_error(mm):" + str(np.average(abs(error_img))))
-
-        # write error map
-        # error_map_thres = 0.25
-        # unvalid_points = np.where(depth_img<=1.0)
-        # diff = depth_img - depth_gt
-        # depth_img_show_error = (depth_img * 255.0 / 2000.0).astype(np.uint8)
-        # error_part = depth_img_show_error.copy()
-        # error_part[np.where((diff>error_map_thres)|(diff<-error_map_thres))] = 255
-        # error_part[unvalid_points] = 0
-        # depth_img_show_error = cv2.cvtColor(depth_img_show_error, cv2.COLOR_GRAY2RGB)
-        # depth_img_show_error[:,:,2] = error_part
-        # cv2.imwrite(res_path + "/error_map.png", depth_img_show_error)
+        if save_mid_res_for_visulize:
+            # write error map
+            error_map_thres = 0.25
+            unvalid_points = np.where(depth_img<=1.0)
+            diff = depth_img - depth_gt
+            depth_img_show_error = (depth_img * 255.0 / 2000.0).astype(np.uint8)
+            error_part = depth_img_show_error.copy()
+            error_part[np.where((diff>error_map_thres)|(diff<-error_map_thres))] = 255
+            error_part[unvalid_points] = 0
+            depth_img_show_error = cv2.cvtColor(depth_img_show_error, cv2.COLOR_GRAY2RGB)
+            depth_img_show_error[:,:,2] = error_part
+            cv2.imwrite(res_path + "/error_map.png", depth_img_show_error)
 
     if os.path.exists(image_path + "depth_gt.exr"):
         gt_depth = cv2.imread(image_path + "depth_gt.exr", cv2.IMREAD_UNCHANGED)[:,:,0]

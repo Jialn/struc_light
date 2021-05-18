@@ -92,7 +92,7 @@ def rectify_phase(img_phase, rectify_map_x, rectify_map_y, height, width, rectif
             # upper = img_phase[src_y_int, src_x_round]
             # lower = img_phase[src_y_int+1, src_x_round]
             # diff = lower - upper
-            # if diff >= 1.0 or np.isnan(diff):
+            # if abs(diff) >= 1.0 or np.isnan(diff):
             #     rectified_img_phase[h,w] = img_phase[round(src_y), src_x_round]
             #     # if np.isnan(upper): rectified_img_phase[h,w] = lower
             #     # else: rectified_img_phase[h,w] = upper
