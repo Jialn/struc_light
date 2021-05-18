@@ -61,13 +61,23 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
 
 __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, short *rectified_bfmap, float *sub_pixel_map_x)
 {
+    const bool use_interpo_for_y_aixs = true;
     int width = width_array[0];
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     int w = idx % width;
     float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
     int round_y = int(src_y+0.5), round_x = int(src_x+0.5);
     int src_pix_idx = round_y*width + round_x;
-    rectified_img_phase[idx] = img_phase[src_pix_idx];
+
+    if (use_interpo_for_y_aixs) {
+        int src_y_int = int(src_y);
+        float upper = img_phase[src_y_int*width+round_x];
+        float lower = img_phase[src_y_int*width+round_x+width];
+        float diff = lower - upper;
+        if ( abs(diff) >= 1.0 | isnan(diff)) rectified_img_phase[idx] = img_phase[src_pix_idx];
+        else rectified_img_phase[idx] = upper + diff * (src_y-src_y_int);
+    }
+    else rectified_img_phase[idx] = img_phase[src_pix_idx];
     rectified_bfmap[idx] = bfmap[src_pix_idx];
     sub_pixel_map_x[idx] = w + (round_x - src_x);
 }
