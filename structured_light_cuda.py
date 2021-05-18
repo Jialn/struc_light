@@ -28,7 +28,7 @@ phsift_pattern_period_per_pixel = 10.0  # normalize the index. porjected pattern
 default_image_seq_start_index = 24  # in some datasets, (0, 24) are for pure gray code solutions 
 
 save_mid_res_for_visulize = False
-visulize_res = False
+visulize_res = True
 
 
 ### read and compile cu file
@@ -73,7 +73,7 @@ def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left,
         img_index_left_sub_px, img_index_right_sub_px, belief_map_left,belief_map_right, 
         cuda.In(np.float32(roughly_projector_area_in_image)), cuda.In(np.float32([depth_cutoff_near, depth_cutoff_far])),
         cuda.In(np.int32(remove_possibly_outliers_when_matching)),
-        block=(width//6, 1, 1), grid=(height, 1))
+        block=(32, 1, 1), grid=(height//32, 1))
 
 def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px):
     optimize_dmap_using_sub_pixel_map_cuda_kernel(unoptimized_depth_map,depth_map,

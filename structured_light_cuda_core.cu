@@ -93,15 +93,12 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     float right_corres_point_offset_range = (width / 128) * area_scale;
     bool check_outliers = (remove_possibly_outliers_when_matching[0] != 0);
 
-    int h = blockIdx.x;  //current_line
-    int thread_working_length = width / blockDim.x;
-    int w_start = threadIdx.x * thread_working_length;
-    int w_end = w_start + thread_working_length;
+    int h = blockIdx.x * blockDim.x + threadIdx.x;  //current_line
     int line_start_addr_offset = h * width;
     float *line_r = img_index_right + line_start_addr_offset;
     float *line_l = img_index_left + line_start_addr_offset;
     int last_right_corres_point = -1;
-    for (int w = w_start; w < w_end; w++) {
+    for (int w = 0; w < width; w++) {
         int curr_pix_idx = line_start_addr_offset + w;
         depth_map[curr_pix_idx] = 0.0;
         if (isnan(line_l[w])) {
