@@ -12,7 +12,7 @@ from pycuda.compiler import SourceModule
 from stereo_rectify import StereoRectify
 
 ### parameters 
-phase_decoding_unvalid_thres = 5  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
+phase_decoding_unvalid_thres = 8  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
                                   # e.g., 1, 2, 5 for low-expo real captured images; 20, 30, 40 for normal expo rendered images.
 remove_possibly_outliers_when_matching = True
@@ -23,7 +23,8 @@ use_depth_avg_filter = True
 depth_avg_filter_max_length = 3   # 4, from 0 - 6
 depth_avg_filter_unvalid_thres = 0.001  # 0.002
 
-roughly_projector_area_in_image = 0.8  # the roughly prjector area in image / image width, e.g., 0.75, 1.0, 1.25
+roughly_projector_area_in_image = 0.75  # the roughly prjector area in image / image width, e.g., 0.5, 0.75, 1.0, 1.25
+                                       # this parameter assume projector resolution is 1K, and decoded index should have the same value as projector's pix
 phsift_pattern_period_per_pixel = 10.0  # normalize the index. porjected pattern res width is 1280; 7 graycode pattern = 2^7 = 128 phase shift periods; 1290/128=10 
 default_image_seq_start_index = 24  # in some datasets, (0, 24) are for pure gray code solutions 
 
@@ -73,7 +74,7 @@ def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left,
         img_index_left_sub_px, img_index_right_sub_px, belief_map_left,belief_map_right, 
         cuda.In(np.float32(roughly_projector_area_in_image)), cuda.In(np.float32([depth_cutoff_near, depth_cutoff_far])),
         cuda.In(np.int32(remove_possibly_outliers_when_matching)),
-        block=(32, 1, 1), grid=(height//32, 1))
+        block=(4, 1, 1), grid=(height//4, 1))
 
 def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px):
     optimize_dmap_using_sub_pixel_map_cuda_kernel(unoptimized_depth_map,depth_map,
@@ -194,6 +195,12 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
     phase_shift_decode_cuda(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres)
     belief_map = img_index # img_index reused as belief_map when phase_shift_decoding
     print("phase decoding: %.3f s" % (time.time() - start_time))
+    if save_mid_res:
+        # check for the unrectified phase
+        images_phsft_left_v = (from_gpu(img_phase, size_sample=prj_valid_map, dtype=np.float32)*4.0).astype(np.uint8)
+        images_phsft_right_v = (from_gpu(img_phase, size_sample=prj_valid_map, dtype=np.float32)*4.0).astype(np.uint8)
+        cv2.imwrite(res_path + "/ph_correspondence_l_unrectified.png", images_phsft_left_v)
+        cv2.imwrite(res_path + "/ph_correspondence_r_unrectified.png", images_phsft_right_v)
     
     ### rectify the decoding res, accroding to left or right
     start_time = time.time()

@@ -66,11 +66,11 @@ __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, flo
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     int w = idx % width;
     float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
-    int round_y = int(src_y+0.5), round_x = int(src_x+0.5);
+    int round_y = int(src_y+0.499999), round_x = int(src_x+0.499999);
     int src_pix_idx = round_y*width + round_x;
 
     if (use_interpo_for_y_aixs) {
-        int src_y_int = int(src_y);
+        int src_y_int = int(src_y-0.000001);
         float upper = img_phase[src_y_int*width+round_x];
         float lower = img_phase[src_y_int*width+round_x+width];
         float diff = lower - upper;
@@ -86,11 +86,10 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
 {
     float depth_cutoff_near = depth_cutoff[0], depth_cutoff_far = depth_cutoff[1];
     int width = width_array[0];
-    float area_scale = 1.333 * roughly_projector_area_in_image[0];
-    float max_allow_pixel_per_index = 1.25 + area_scale * width / 1280.0;
-    float max_index_offset_when_matching = 1.3 * (1280.0 / width);  //typical condition: a lttle larger than 2.0 for 640, 1.0 for 1280, 0.5 for 2560
-    float max_index_offset_when_matching_ex = max_index_offset_when_matching * 1.5;
-    float right_corres_point_offset_range = (width / 128) * area_scale;
+    float projector_area_ratio = roughly_projector_area_in_image[0];
+    float index_thres_when_matching = 0.25 + (1280.0 / width) / projector_area_ratio;  //the smaller projector_area in image, the larger index_offset cloud be
+    float max_allow_pixel_per_index_for_outliers_checking = 1.25 + 1.333 * projector_area_ratio * width / 1280.0;
+    float right_corres_point_offset_range = 1.333 * (width / 128) * projector_area_ratio;
     bool check_outliers = (remove_possibly_outliers_when_matching[0] != 0);
 
     int h = blockIdx.x * blockDim.x + threadIdx.x;  //current_line
@@ -115,11 +114,12 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
             if (checking_right_edge >=width) checking_right_edge=width;
             for (int i=checking_left_edge; i < checking_right_edge; i++) {  // fast checking around last_right_corres_point
                 if (isnan(line_r[i])) continue;
-                else if ((line_l[w]-max_index_offset_when_matching <= line_r[i]) & (line_r[i] <= line_l[w])) {
+                float thres = index_thres_when_matching + abs(img_index_left_sub_px[line_start_addr_offset+w] - w - img_index_right_sub_px[line_start_addr_offset+i] + i)/projector_area_ratio;
+                if ((line_l[w]-thres <= line_r[i]) & (line_r[i] <= line_l[w])) {
                     if (most_corres_pts_l==-1) most_corres_pts_l = i;
                     else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
                 }
-                else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+max_index_offset_when_matching)) {
+                else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+thres)) {
                     if (most_corres_pts_r==-1) most_corres_pts_r = i;
                     else if (line_r[i] <= line_r[most_corres_pts_r]) most_corres_pts_r = i;
                 }
@@ -129,11 +129,12 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         if (most_corres_pts_l == -1 & most_corres_pts_r == -1) {
             for (int i=0; i < width; i++) { 
                 if (isnan(line_r[i])) continue;
-                else if ((line_l[w]-max_index_offset_when_matching_ex <= line_r[i]) & (line_r[i] <= line_l[w])) {
+                float thres = index_thres_when_matching;
+                if ((line_l[w]-thres <= line_r[i]) & (line_r[i] <= line_l[w])) {
                     if (most_corres_pts_l==-1) most_corres_pts_l = i;
                     else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
                 }
-                else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+max_index_offset_when_matching_ex)) {
+                else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+thres)) {
                     if (most_corres_pts_r==-1) most_corres_pts_r = i;
                     else if (line_r[i] <= line_r[most_corres_pts_r]) most_corres_pts_r = i;
                 }
@@ -152,20 +153,20 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
             if (right_pos-left_pos != 0) w_r = left_value + (right_value-left_value) * (line_l[w]-left_pos)/(right_pos-left_pos);
             else w_r = left_value;
             // check possiblely outliers using max_allow_pixel_per_index and belief_map
-            if (check_outliers==true & belief_map_r[line_start_addr_offset+(int)(w_r+0.5)]==0) {
-                if (abs((float)(most_corres_pts_l-w_r)) > max_allow_pixel_per_index) outliers_flag = true;
-                if (abs((float)(most_corres_pts_r-w_r)) > max_allow_pixel_per_index) outliers_flag = true;
+            if (check_outliers==true & belief_map_r[line_start_addr_offset+(int)(w_r+0.499999)]==0) {
+                if (abs((float)(most_corres_pts_l-w_r)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
+                if (abs((float)(most_corres_pts_r-w_r)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
             }
             if (outliers_flag==true) continue;
         }
-        last_right_corres_point = (int)(w_r+0.5);
+        last_right_corres_point = (int)(w_r+0.499999);
         // get left index
         float w_l = img_index_left_sub_px[curr_pix_idx];
         // check possiblely left outliers
         if (check_outliers==true & belief_map_l[curr_pix_idx]==0) {
             for (int i=0; i < width; i++) {
-                if ((line_l[w]-max_index_offset_when_matching_ex <= line_l[i]) & (line_l[i] <= line_l[w]+max_index_offset_when_matching_ex)) {
-                    if (abs((float)(w-i)) > max_allow_pixel_per_index) outliers_flag = true;
+                if ((line_l[w]-index_thres_when_matching <= line_l[i]) & (line_l[i] <= line_l[w]+index_thres_when_matching)) {
+                    if (abs((float)(w-i)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
                 }
             }
         }
