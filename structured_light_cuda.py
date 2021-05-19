@@ -12,21 +12,22 @@ from pycuda.compiler import SourceModule
 from stereo_rectify import StereoRectify
 
 ### parameters 
-phase_decoding_unvalid_thres = 8  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
+phase_decoding_unvalid_thres = 5  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
                                   # e.g., 1, 2, 5 for low-expo real captured images; 20, 30, 40 for normal expo rendered images.
 remove_possibly_outliers_when_matching = True
-depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
-depth_filter_max_distance = 0.005 # about 5-7 times of resolution per pxiel
-depth_filter_minmum_points_in_checking_range = 2  # including the point itsself, will also add a ratio of width // 400
+depth_cutoff_near, depth_cutoff_far = 0.1, 2.0      # depth cutoff
+depth_filter_max_distance = 0.005                   # about 5-7 times of resolution per pxiel
+depth_filter_minmum_points_in_checking_range = 2    # including the point itsself, will also add a ratio of width // 400
 use_depth_avg_filter = True
-depth_avg_filter_max_length = 3   # 4, from 0 - 6
+depth_avg_filter_max_length = 3         # 4, from 0 - 6
 depth_avg_filter_unvalid_thres = 0.001  # 0.002
 
-roughly_projector_area_in_image = 0.75  # the roughly prjector area in image / image width, e.g., 0.5, 0.75, 1.0, 1.25
-                                       # this parameter assume projector resolution is 1K, and decoded index should have the same value as projector's pix
+roughly_projector_area_ratio_in_image = None    # the roughly prjector area in image / image width, e.g., 0.5, 0.75, 1.0, 1.25
+                                                # this parameter assume projector resolution is 1K, and decoded index should have the same value as projector's pix
+                                                # if None, will be estimated from image automaticly
 phsift_pattern_period_per_pixel = 10.0  # normalize the index. porjected pattern res width is 1280; 7 graycode pattern = 2^7 = 128 phase shift periods; 1290/128=10 
-default_image_seq_start_index = 24  # in some datasets, (0, 24) are for pure gray code solutions 
+default_image_seq_start_index = 24      # in some datasets, (0, 24) are for pure gray code solutions 
 
 save_mid_res_for_visulize = False
 visulize_res = True
@@ -66,13 +67,13 @@ def rectify_phase_and_belief_map_cuda(img_phase, belief_map, rectify_map_x, rect
         rectified_img_phase, rectified_belief_map, sub_pixel_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right):
+def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right, roughly_projector_area_ratio):
     gen_depth_from_index_matching_cuda_kernel(depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         img_index_left, img_index_right, 
         cuda.In(np.float32(baseline)), cuda.In(np.float32(dmap_base)),cuda.In(np.float32(fx)),
         img_index_left_sub_px, img_index_right_sub_px, belief_map_left,belief_map_right, 
-        cuda.In(np.float32(roughly_projector_area_in_image)), cuda.In(np.float32([depth_cutoff_near, depth_cutoff_far])),
+        cuda.In(np.float32(roughly_projector_area_ratio)), cuda.In(np.float32([depth_cutoff_near, depth_cutoff_far])),
         cuda.In(np.int32(remove_possibly_outliers_when_matching)),
         block=(6, 16, 1), grid=(height, 1))
 
@@ -119,7 +120,7 @@ gpu_remap_y_left = None
 gpu_remap_x_right = None
 gpu_remap_y_right = None
 def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, images=None):
-    global global_reading_img_time, img_phase, img_index, gpu_remap_x_left, gpu_remap_y_left, gpu_remap_x_right, gpu_remap_y_right
+    global global_reading_img_time, img_phase, img_index, gpu_remap_x_left, gpu_remap_y_left, gpu_remap_x_right, gpu_remap_y_right, roughly_projector_area_ratio_in_image
     unvalid_thres = 0
     save_mid_res = save_mid_res_for_visulize
     image_seq_start_index = default_image_seq_start_index
@@ -162,6 +163,10 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
         cuda.memcpy_htod(gpu_remap_y_right, rectify_map_y_right)
     prj_valid_map = prj_area_posi - prj_area_nega
     thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, max(2*unvalid_thres, phase_decoding_unvalid_thres), 255, cv2.THRESH_BINARY)
+    if roughly_projector_area_ratio_in_image is None:
+        total_pix, projector_area_pix = prj_valid_map_bin.nbytes, len(np.where(prj_valid_map_bin == 255)[0])
+        roughly_projector_area_ratio_in_image = np.sqrt(projector_area_pix/total_pix)
+        print("estimated valid_area_ratio: "+str(roughly_projector_area_ratio_in_image))
     if img_phase is None:
         img_phase = cuda.mem_alloc(prj_valid_map.nbytes*4)  # float32
         img_index = cuda.mem_alloc(prj_valid_map.nbytes*2)  # int16
@@ -245,7 +250,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     # print("alloc mem for maps: %.3f s" % (time.time() - start_time))  # less than 1ms
     ### Infer DepthMap from Index Matching
     start_time = time.time()
-    gen_depth_from_index_matching_cuda(gpu_unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right)
+    gen_depth_from_index_matching_cuda(gpu_unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right, roughly_projector_area_ratio_in_image)
     print("index matching and depth map generating: %.3f s" % (time.time() - start_time))
     start_time = time.time()
     optimize_dmap_using_sub_pixel_map_cuda(gpu_unoptimized_depth_map, gpu_depth_map_raw, height,width, img_index_left_sub_px)
@@ -302,7 +307,6 @@ if __name__ == "__main__":
     if not os.path.exists(res_path): os.system("mkdir " + res_path)
     
     rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
-    gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     

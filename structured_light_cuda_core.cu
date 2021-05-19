@@ -92,17 +92,13 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     float right_corres_point_offset_range = 1.333 * (width / 128) * projector_area_ratio;
     bool check_outliers = (remove_possibly_outliers_when_matching[0] != 0);
 
-    int h = blockIdx.x;  //current working line; blockDim.x is stride, blockDim.y is spilit num per line
-    int stride = blockDim.x;
-    int offset = threadIdx.x;
-    int thread_work_length = width / blockDim.y;
-    int start = thread_work_length * threadIdx.y + offset;
-    int end = start + thread_work_length;
+    int h = blockIdx.x, stride = blockDim.x, offset = threadIdx.x;  //blockIdx.x is current working line; blockDim.x is stride
+    int thread_work_length = width / blockDim.y;  //blockDim.y is the num of threads group per line
+    int start = thread_work_length*threadIdx.y, end = thread_work_length+start;
     int line_start_addr_offset = h * width;
-    float *line_r = img_index_right + line_start_addr_offset;
-    float *line_l = img_index_left + line_start_addr_offset;
+    float *line_r = img_index_right + line_start_addr_offset, *line_l = img_index_left + line_start_addr_offset;
     int last_right_corres_point = -1;
-    for (int w = start; w < end; w+=stride) {
+    for (int w = start+offset; w < end; w+=stride) {
         int curr_pix_idx = line_start_addr_offset + w;
         depth_map[curr_pix_idx] = 0.0;
         if (isnan(line_l[w])) {
