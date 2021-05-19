@@ -92,12 +92,17 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     float right_corres_point_offset_range = 1.333 * (width / 128) * projector_area_ratio;
     bool check_outliers = (remove_possibly_outliers_when_matching[0] != 0);
 
-    int h = blockIdx.x * blockDim.x + threadIdx.x;  //current_line
+    int h = blockIdx.x;  //current working line; blockDim.x is stride, blockDim.y is spilit num per line
+    int stride = blockDim.x;
+    int offset = threadIdx.x;
+    int thread_work_length = width / blockDim.y;
+    int start = thread_work_length * threadIdx.y + offset;
+    int end = start + thread_work_length;
     int line_start_addr_offset = h * width;
     float *line_r = img_index_right + line_start_addr_offset;
     float *line_l = img_index_left + line_start_addr_offset;
     int last_right_corres_point = -1;
-    for (int w = 0; w < width; w++) {
+    for (int w = start; w < end; w+=stride) {
         int curr_pix_idx = line_start_addr_offset + w;
         depth_map[curr_pix_idx] = 0.0;
         if (isnan(line_l[w])) {
@@ -109,7 +114,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         int checking_left_edge = 0, checking_right_edge = width;
         if (last_right_corres_point > 0) {
             checking_left_edge = last_right_corres_point - right_corres_point_offset_range;
-            checking_right_edge = last_right_corres_point + right_corres_point_offset_range;
+            checking_right_edge = last_right_corres_point + right_corres_point_offset_range + stride;
             if (checking_left_edge <=0) checking_left_edge=0;
             if (checking_right_edge >=width) checking_right_edge=width;
             for (int i=checking_left_edge; i < checking_right_edge; i++) {  // fast checking around last_right_corres_point
