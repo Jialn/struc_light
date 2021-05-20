@@ -90,7 +90,6 @@ def rectify_phase(img_phase, rectify_map_x, rectify_map_y, height, width, rectif
     for h in prange(height):
         for w in range(width):
             src_x, src_y = rectify_map_x[h,w], rectify_map_y[h,w]
-            ### if use interpolation, only apply to y axis. The precision will be a little bit higher
             if use_interpo_for_y_aixs:
                 src_x_round, src_y_int = round(src_x), int(src_y)
                 upper = img_phase[src_y_int, src_x_round]
@@ -434,7 +433,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     start_time = time.time()
     flying_points_filter(depth_map, depth_map_raw, height, width, camera_kd_l.astype(np.float32))
     print("flying point filter: %.3f s" % (time.time() - start_time))
-    if use_depth_filter:
+    if use_depth_filter:  # a filter that smothing the image while preserves local structure
         start_time = time.time()
         depth_filter(depth_map, height, width)
         print("depth avg filter: %.3f s" % (time.time() - start_time))
