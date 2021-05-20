@@ -92,6 +92,7 @@ def rectify_phase(img_phase, rectify_map_x, rectify_map_y, height, width, rectif
             src_x, src_y = rectify_map_x[h,w], rectify_map_y[h,w]
             if use_interpo_for_y_aixs:
                 src_x_round, src_y_int = round(src_x), int(src_y)
+                if src_y_int == height-1: src_y_int = height - 2
                 upper = img_phase[src_y_int, src_x_round]
                 lower = img_phase[src_y_int+1, src_x_round]
                 diff = lower - upper

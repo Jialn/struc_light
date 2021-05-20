@@ -62,7 +62,7 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
 __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, short *rectified_bfmap, float *sub_pixel_map_x)
 {
     const bool use_interpo_for_y_aixs = true;
-    int width = width_array[0];
+    int width = width_array[0], height = height_array[0];
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     int w = idx % width;
     float src_x = rectify_map_x[idx], src_y = rectify_map_y[idx];
@@ -70,7 +70,8 @@ __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, flo
     int src_pix_idx = round_y*width + round_x;
 
     if (use_interpo_for_y_aixs) {
-        int src_y_int = int(src_y-0.000001);
+        int src_y_int = int(src_y);
+        if (src_y_int == height-1) src_y_int = height - 2;
         float upper = img_phase[src_y_int*width+round_x];
         float lower = img_phase[src_y_int*width+round_x+width];
         float diff = lower - upper;
