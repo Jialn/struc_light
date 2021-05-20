@@ -17,11 +17,11 @@ phase_decoding_unvalid_thres = 5  # if the diff of pixel in an inversed pattern(
                                   # e.g., 1, 2, 5 for low-expo real captured images; 20, 30, 40 for normal expo rendered images.
 remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0      # depth cutoff
-depth_filter_max_distance = 0.005                   # about 5-7 times of resolution per pxiel
-depth_filter_minmum_points_in_checking_range = 2    # including the point itsself, will also add a ratio of width // 400
+flying_points_filter_checking_range = 0.0025        # about 5-7 times of resolution per pxiel
+flying_points_filter_minmum_points_in_checking_range = 2  # including the point itself, will also add a ratio of width // 400
 use_depth_avg_filter = True
-depth_avg_filter_max_length = 3         # 4, from 0 - 6
-depth_avg_filter_unvalid_thres = 0.001  # 0.002
+depth_avg_filter_max_length = 3                     #  from 0 - 6
+depth_avg_filter_unvalid_thres = 0.001
 
 roughly_projector_area_ratio_in_image = None    # the roughly prjector area in image / image width, e.g., 0.5, 0.75, 1.0, 1.25
                                                 # this parameter assume projector resolution is 1K, and decoded index should have the same value as projector's pix
@@ -86,7 +86,7 @@ def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, hei
 def flying_points_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd_l):
     flying_points_filter_cuda_kernel(depth_map, depth_map_raw,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
-        cuda.In(camera_kd_l), cuda.In(np.float32(depth_filter_max_distance)), cuda.In(np.int32(depth_filter_minmum_points_in_checking_range)),
+        cuda.In(camera_kd_l), cuda.In(np.float32(flying_points_filter_checking_range)), cuda.In(np.int32(flying_points_filter_minmum_points_in_checking_range)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def depth_avg_filter_cuda(depth_map, height, width):
@@ -162,7 +162,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
         cuda.memcpy_htod(gpu_remap_x_right, rectify_map_x_right)
         cuda.memcpy_htod(gpu_remap_y_right, rectify_map_y_right)
     prj_valid_map = prj_area_posi - prj_area_nega
-    thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, max(2*unvalid_thres, phase_decoding_unvalid_thres), 255, cv2.THRESH_BINARY)
+    thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, 1+phase_decoding_unvalid_thres//2, 255, cv2.THRESH_BINARY)
     if roughly_projector_area_ratio_in_image is None:
         total_pix, projector_area_pix = prj_valid_map_bin.nbytes, len(np.where(prj_valid_map_bin == 255)[0])
         roughly_projector_area_ratio_in_image = np.sqrt(projector_area_pix/total_pix)
@@ -231,7 +231,6 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     ### Rectify and Decode 
     pipe_start_time = start_time = time.time()
     gray_left, belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = index_decoding_from_images(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left)
-    print("- left decoding total: %.3f s" % (time.time() - start_time - global_reading_img_time))
     _, belief_map_right, img_index_right, camera_kd_r, img_index_right_sub_px = index_decoding_from_images(pattern_path, '_r.bmp', rectifier=rectifier, res_path=res_path, images=images_right)
     print("- left and right decoding in total: %.3f s" % (time.time() - start_time - global_reading_img_time))
     ### Get camera parameters
