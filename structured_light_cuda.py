@@ -19,9 +19,9 @@ remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0      # depth cutoff
 flying_points_filter_checking_range = 0.0025        # about 5-7 times of resolution per pxiel
 flying_points_filter_minmum_points_in_checking_range = 2  # including the point itself, will also add a ratio of width // 400
-use_depth_avg_filter = True
-depth_avg_filter_max_length = 3                     #  from 0 - 6
-depth_avg_filter_unvalid_thres = 0.001
+use_depth_filter = True                             # a filter that smothing the image while preserves local structure
+depth_filter_max_length = 3                         # from 0 - 6
+depth_filter_unvalid_thres = 0.001
 
 roughly_projector_area_ratio_in_image = None    # the roughly prjector area in image / image width, e.g., 0.5, 0.75, 1.0, 1.25
                                                 # this parameter assume projector resolution is 1K, and decoded index should have the same value as projector's pix
@@ -45,7 +45,7 @@ phase_shift_decode_cuda_kernel = cuda_module.get_function("phase_shift_decode")
 flying_points_filter_cuda_kernel = cuda_module.get_function("flying_points_filter")
 gen_depth_from_index_matching_cuda_kernel = cuda_module.get_function("gen_depth_from_index_matching")
 rectify_phase_and_belief_map_cuda_kernel = cuda_module.get_function("rectify_phase_and_belief_map")
-depth_avg_filter_cuda_kernel = cuda_module.get_function("depth_avg_filter")
+depth_filter_cuda_kernel = cuda_module.get_function("depth_filter")
 optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
 convert_dmap_to_mili_meter = cuda_module.get_function("convert_dmap_to_mili_meter")
 
@@ -89,10 +89,10 @@ def flying_points_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd
         cuda.In(camera_kd_l), cuda.In(np.float32(flying_points_filter_checking_range)), cuda.In(np.int32(flying_points_filter_minmum_points_in_checking_range)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def depth_avg_filter_cuda(depth_map, height, width):
-    depth_avg_filter_cuda_kernel(depth_map,
+def depth_filter_cuda(depth_map, height, width):
+    depth_filter_cuda_kernel(depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
-        cuda.In(np.int32(depth_avg_filter_max_length)), cuda.In(np.float32(depth_avg_filter_unvalid_thres)),
+        cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unvalid_thres)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 # ### for simple pycuda test
@@ -124,7 +124,6 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
     unvalid_thres = 0
     save_mid_res = save_mid_res_for_visulize
     image_seq_start_index = default_image_seq_start_index
-    # read images
     start_time = time.time()
     if images is None:
         fname = image_path + str(image_seq_start_index) + appendix
@@ -258,9 +257,9 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     start_time = time.time()
     flying_points_filter_cuda(gpu_depth_map_filtered, gpu_depth_map_raw, height, width, camera_kd_l.astype(np.float32))
     print("flying point filter: %.3f s" % (time.time() - start_time))
-    if use_depth_avg_filter:
+    if use_depth_filter:
         start_time = time.time()
-        depth_avg_filter_cuda(gpu_depth_map_filtered, height, width)
+        depth_filter_cuda(gpu_depth_map_filtered, height, width)
         print("depth avg filter: %.3f s" % (time.time() - start_time))
     # readout
     convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1));

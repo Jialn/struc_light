@@ -10,21 +10,23 @@ import numba
 from numba import prange
 from stereo_rectify import StereoRectify
 
-### parameters
+### parameters 
 phase_decoding_unvalid_thres = 5  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
                                   # e.g., 1, 2, 5 for low-expo real captured images; 20, 30, 40 for normal expo rendered images.
 remove_possibly_outliers_when_matching = True
-depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
-depth_filter_max_distance = 0.005 # about 5-7 times of resolution per pxiel
-depth_filter_minmum_points_in_checking_range = 2  # including the point itsself, will also add a ratio of width // 400
-use_depth_avg_filter = True
-depth_avg_filter_max_length = 2   # 4, from 0 - 6
-depth_avg_filter_unvalid_thres = 0.001  # 0.002
+depth_cutoff_near, depth_cutoff_far = 0.1, 2.0      # depth cutoff
+flying_points_filter_checking_range = 0.0025        # about 5-7 times of resolution per pxiel
+flying_points_filter_minmum_points_in_checking_range = 2  # including the point itself, will also add a ratio of width // 400
+use_depth_filter = True                             # a filter that smothing the image while preserves local structure
+depth_filter_max_length = 3                         # from 0 - 6
+depth_filter_unvalid_thres = 0.001
 
-roughly_projector_area_in_image = 0.8  # the roughly prjector area in image / image width, e.g., 0.75, 1.0, 1.25
+roughly_projector_area_ratio_in_image = None    # the roughly prjector area in image / image width, e.g., 0.5, 0.75, 1.0, 1.25
+                                                # this parameter assume projector resolution is 1K, and decoded index should have the same value as projector's pix
+                                                # if None, will be estimated from image automaticly
 phsift_pattern_period_per_pixel = 10.0  # normalize the index. porjected pattern res width is 1280; 7 graycode pattern = 2^7 = 128 phase shift periods; 1290/128=10 
-default_image_seq_start_index = 24  # in some datasets, (0, 24) are for pure gray code solutions 
+default_image_seq_start_index = 24      # in some datasets, (0, 24) are for pure gray code solutions 
 
 use_parallel_computing = False
 save_mid_res_for_visulize = False
@@ -84,22 +86,25 @@ def phase_shift_decode(src, height, width, img_phase, img_index, unvalid_thres):
 @numba.jit  ((numba.float32[:,:], numba.float32[:,:], numba.float32[:,:], numba.int64, numba.int64, numba.float32[:,:], numba.float32[:,:]),nopython=True, parallel=use_parallel_computing, cache=True)
 def rectify_phase(img_phase, rectify_map_x, rectify_map_y, height, width, rectified_img_phase, sub_pixel_map_x):
     # rectify_map is, for each pixel (u,v) in the destination (corrected and rectified) image, the corresponding coordinates in the source image (that is, in the original image from camera)
+    use_interpo_for_y_aixs = True
     for h in prange(height):
         for w in range(width):
             src_x, src_y = rectify_map_x[h,w], rectify_map_y[h,w]
             ### if use interpolation, only apply to y axis. The precision will be a little bit higher
-            # src_x_round, src_y_int = round(src_x), int(src_y)
-            # upper = img_phase[src_y_int, src_x_round]
-            # lower = img_phase[src_y_int+1, src_x_round]
-            # diff = lower - upper
-            # if abs(diff) >= 1.0 or np.isnan(diff):
-            #     rectified_img_phase[h,w] = img_phase[round(src_y), src_x_round]
-            #     # if np.isnan(upper): rectified_img_phase[h,w] = lower
-            #     # else: rectified_img_phase[h,w] = upper
-            # else:
-            #     inter_value = upper + diff * (src_y-src_y_int)
-            #     rectified_img_phase[h,w] = inter_value
-            rectified_img_phase[h,w] = img_phase[round(src_y), round(src_x)]
+            if use_interpo_for_y_aixs:
+                src_x_round, src_y_int = round(src_x), int(src_y)
+                upper = img_phase[src_y_int, src_x_round]
+                lower = img_phase[src_y_int+1, src_x_round]
+                diff = lower - upper
+                if abs(diff) >= 1.0 or np.isnan(diff):
+                    rectified_img_phase[h,w] = img_phase[round(src_y), src_x_round]
+                    # if np.isnan(upper): rectified_img_phase[h,w] = lower
+                    # elif np.isnan(lower): rectified_img_phase[h,w] = upper
+                else:
+                    inter_value = upper + diff * (src_y-src_y_int)
+                    rectified_img_phase[h,w] = inter_value
+            else:
+                rectified_img_phase[h,w] = img_phase[round(src_y), round(src_x)]
             sub_pixel_map_x[h,w] = w + (round(src_x) - src_x)
 
 @numba.jit  ((numba.int16[:,:], numba.float32[:,:], numba.float32[:,:], numba.int64, numba.int64, numba.int16[:,:]),nopython=True, parallel=use_parallel_computing, cache=True)
@@ -109,14 +114,15 @@ def rectify_belief_map(img, rectify_map_x, rectify_map_y, height, width, rectifi
             src_x, src_y = rectify_map_x[h,w], rectify_map_y[h,w]
             rectified_img[h,w] = img[round(src_y), round(src_x)]
 
-@numba.jit  ((numba.float32[:,:], numba.int64,numba.int64, numba.float32[:,:],numba.float32[:,:], numba.float32,numba.float32,numba.float32, numba.float32[:,:],numba.float32[:,:],numba.int16[:,:], numba.int16[:,:] ), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
-def gen_depth_from_index_matching(depth_map, height,width, img_index_left,img_index_right, baseline,dmap_base,fx, img_index_left_sub_px,img_index_right_sub_px, belief_map_l, belief_map_r):
-    area_scale = 1.333 * roughly_projector_area_in_image
-    max_allow_pixel_per_index = 1.25 + area_scale * width / 1280.0
-    max_index_offset_when_matching = 1.3 * (1280.0 / width)  # typical condition: a lttle larger than 2.0 for 640, 1.0 for 1280, 0.5 for 2560
-    max_index_offset_when_matching_ex = max_index_offset_when_matching * 1.5
-    right_corres_point_offset_range = (width // 128) * area_scale
+@numba.jit  ((numba.float32[:,:], numba.int64,numba.int64, numba.float32[:,:],numba.float32[:,:], numba.float32,numba.float32,numba.float32, numba.float32[:,:],numba.float32[:,:],numba.int16[:,:], numba.int16[:,:], numba.float32 ), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
+def gen_depth_from_index_matching(depth_map, height,width, img_index_left,img_index_right, baseline,dmap_base,fx, img_index_left_sub_px,img_index_right_sub_px, belief_map_l, belief_map_r, roughly_projector_area_in_image):
+    projector_area_ratio = roughly_projector_area_in_image
+    index_thres_for_matching = 0.25 + (1280.0 / width) / projector_area_ratio  # the smaller projector_area in image, the larger index_offset cloud be
+    right_corres_point_offset_range = (1.333 * projector_area_ratio * width) // 128
     check_outliers = remove_possibly_outliers_when_matching
+    # if another pixel has similar index(<index_thres_for_outliers_checking) has a distance > max_allow_pixel_per_index, consider it's an outlier 
+    max_allow_pixel_per_index_for_outliers_checking = 1.5 + 1.5 * projector_area_ratio * width / 1280.0
+    index_thres_for_outliers_checking = index_thres_for_matching * 1.2
     for h in prange(height):
         line_r = img_index_right[h,:]
         line_l = img_index_left[h,:]
@@ -126,64 +132,69 @@ def gen_depth_from_index_matching(depth_map, height,width, img_index_left,img_in
                 last_right_corres_point = -1
                 continue
             ## find the possible corresponding points in right image
-            cnt_l, cnt_r = 0, 0
             most_corres_pts_l, most_corres_pts_r = -1, -1
+            checking_left_edge, checking_right_edge = 0, width
+            cnt_l, cnt_r, average_corres_position_in_thres_l, average_corres_position_in_thres_r = 0, 0, 0, 0
             if last_right_corres_point > 0:
                 checking_left_edge = last_right_corres_point - right_corres_point_offset_range
                 checking_right_edge = last_right_corres_point + right_corres_point_offset_range
                 if checking_left_edge <=0: checking_left_edge=0
                 if checking_right_edge >=width: checking_right_edge=width
-            else:
-                checking_left_edge, checking_right_edge = 0, width
-            for i in range(checking_left_edge, checking_right_edge):
-                if np.isnan(line_r[i]): continue
-                if line_l[w]-max_index_offset_when_matching <= line_r[i] <= line_l[w]:
-                    if most_corres_pts_l == -1: most_corres_pts_l = i
-                    elif line_l[w] - line_r[i] <= line_l[w] - line_r[most_corres_pts_l]: most_corres_pts_l = i
-                    cnt_l += 1
-                if line_l[w] <= line_r[i] <= line_l[w]+max_index_offset_when_matching:
-                    if most_corres_pts_r == -1: most_corres_pts_r = i
-                    elif line_r[i] - line_l[w] <= line_r[most_corres_pts_r] - line_l[w]: most_corres_pts_r = i
-                    cnt_r += 1
-            if cnt_l == 0 and cnt_r == 0:  # expand the searching range and try again
-                for i in range(width):
+                for i in range(checking_left_edge, checking_right_edge):
                     if np.isnan(line_r[i]): continue
-                    if line_l[w]-max_index_offset_when_matching_ex <= line_r[i] <= line_l[w]:
+                    thres = index_thres_for_matching + abs(img_index_left_sub_px[h,w] - w - img_index_right_sub_px[h,i] + i)/projector_area_ratio
+                    if line_l[w]-thres <= line_r[i] <= line_l[w]:
                         if most_corres_pts_l == -1: most_corres_pts_l = i
                         elif line_l[w] - line_r[i] <= line_l[w] - line_r[most_corres_pts_l]: most_corres_pts_l = i
                         cnt_l += 1
-                    if line_l[w] <= line_r[i] <= line_l[w]+max_index_offset_when_matching_ex:
+                        average_corres_position_in_thres_l += i
+                    if line_l[w] <= line_r[i] <= line_l[w]+thres:
                         if most_corres_pts_r == -1: most_corres_pts_r = i
                         elif line_r[i] - line_l[w] <= line_r[most_corres_pts_r] - line_l[w]: most_corres_pts_r = i
                         cnt_r += 1
-            if cnt_l == 0 and cnt_r == 0: continue
-            if most_corres_pts_l == -1: most_corres_pts_l = most_corres_pts_r
-            elif most_corres_pts_r == -1: most_corres_pts_r = most_corres_pts_l
-            left_pos, right_pos = line_r[most_corres_pts_l], line_r[most_corres_pts_r]
-            left_value, right_value = img_index_right_sub_px[h, most_corres_pts_l], img_index_right_sub_px[h, most_corres_pts_r]
-            if cnt_l != 0 and cnt_r != 0:
-                # interpo for corresponding right point
-                if right_pos-left_pos != 0: inter_value = left_value + (right_value-left_value) * (line_l[w]-left_pos)/(right_pos-left_pos)
-                else: inter_value = left_value
-                w_r = inter_value
-            elif cnt_l != 0:
-                w_r = left_value
+                        average_corres_position_in_thres_r += i
+            # last_right_corres_point is invalid or not found most_corres_pts, expand the searching range and try searching again            
+            if most_corres_pts_l == -1 and most_corres_pts_r == -1:
+                for i in range(width):
+                    if np.isnan(line_r[i]): continue
+                    if line_l[w]-index_thres_for_matching <= line_r[i] <= line_l[w]:
+                        if most_corres_pts_l == -1: most_corres_pts_l = i
+                        elif line_l[w] - line_r[i] <= line_l[w] - line_r[most_corres_pts_l]: most_corres_pts_l = i
+                        cnt_l += 1
+                        average_corres_position_in_thres_l += i
+                    if line_l[w] <= line_r[i] <= line_l[w]+index_thres_for_matching:
+                        if most_corres_pts_r == -1: most_corres_pts_r = i
+                        elif line_r[i] - line_l[w] <= line_r[most_corres_pts_r] - line_l[w]: most_corres_pts_r = i
+                        cnt_r += 1
+                        average_corres_position_in_thres_r += i
+            if most_corres_pts_l == -1 and most_corres_pts_r == -1: continue
+            elif most_corres_pts_l == -1: w_r = img_index_right_sub_px[h,most_corres_pts_r]+0.2
+            elif most_corres_pts_r == -1: w_r = img_index_right_sub_px[h,most_corres_pts_l]-0.2
             else:
-                w_r = right_value
-            # check possiblely outliers using max_allow_pixel_per_index and belief_map
+                left_pos, right_pos = line_r[most_corres_pts_l], line_r[most_corres_pts_r]
+                left_value, right_value = img_index_right_sub_px[h, most_corres_pts_l], img_index_right_sub_px[h, most_corres_pts_r]
+                # interpo for corresponding right point
+                if right_pos-left_pos != 0: w_r = left_value + (right_value-left_value) * (line_l[w]-left_pos)/(right_pos-left_pos)
+                else: w_r = left_value
+            if cnt_l != 0: average_corres_position_in_thres_l = average_corres_position_in_thres_l / cnt_l
+            if cnt_r != 0: average_corres_position_in_thres_r = average_corres_position_in_thres_r / cnt_r
+            # check possiblely outliers using max_allow_pixel_per_index_for_outliers_checking and belief_map
             outliers_flag = False
-            if check_outliers and belief_map_r[h,round(w_r)]==0:
-                if abs(most_corres_pts_l-w_r) >= max_allow_pixel_per_index: outliers_flag = True
-                if abs(most_corres_pts_r-w_r) >= max_allow_pixel_per_index: outliers_flag = True
+            if check_outliers: # and belief_map_r[h,round(w_r)]==0:
+                if most_corres_pts_l != -1 and abs(most_corres_pts_l-w_r) >= max_allow_pixel_per_index_for_outliers_checking: outliers_flag = True
+                if most_corres_pts_r != -1 and abs(most_corres_pts_r-w_r) >= max_allow_pixel_per_index_for_outliers_checking: outliers_flag = True
+                if average_corres_position_in_thres_l != 0 and abs(average_corres_position_in_thres_l-w_r) > max_allow_pixel_per_index_for_outliers_checking: outliers_flag = True
+                if average_corres_position_in_thres_r != 0 and abs(average_corres_position_in_thres_r-w_r) > max_allow_pixel_per_index_for_outliers_checking: outliers_flag = True
             if outliers_flag: continue
             last_right_corres_point = round(w_r)
             # get left index
             w_l = img_index_left_sub_px[h, w]
             # check possiblely left outliers
+            outliers_flag = False
             if check_outliers and belief_map_l[h,w]==0:
                 for i in range(width):
-                    if line_l[w]-max_index_offset_when_matching_ex <= line_l[i] <= line_l[w]+max_index_offset_when_matching_ex:
-                        if abs(w-i) > max_allow_pixel_per_index: outliers_flag = True
+                    if line_l[w]-index_thres_for_outliers_checking <= line_l[i] <= line_l[w]+index_thres_for_outliers_checking:
+                        if abs(w-i) > max_allow_pixel_per_index_for_outliers_checking: outliers_flag = True
             if outliers_flag: continue
             ## stereo diff and depth
             stereo_diff = dmap_base + w_l - w_r
@@ -221,10 +232,13 @@ def optimize_dmap_using_sub_pixel_map(depth_map, optimized_depth_map, height,wid
                 optimized_depth_map[h,w] = inter_value
 
 @numba.jit  ((numba.float32[:,:], numba.float32[:,:], numba.int64, numba.int64, numba.float32[:,:]), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
-def depth_filter(depth_map, depth_map_raw, height, width, camera_kp):
+def flying_points_filter(depth_map, depth_map_raw, height, width, camera_kp):
     # a point could be considered as not flying when: points in checking range below max_distance > minmum num 
-    max_distance = depth_filter_max_distance
-    minmum_point_num_in_range = depth_filter_minmum_points_in_checking_range + (width // 400) * (width // 400)
+    use_3d_distance = False # use 3D distance (slower but more precisely) or only distance of axis-z to check flying points
+                            # setting to false will save above 95% time compared with 3D distance checking, while can still remove most of the flying pts.
+                            # an example (3d vs only_z): render0000_2k avg error @ 10 mm thres: 0.1145mm vs 0.1152mm; cost time: 17ms vs 1ms; total time 80ms vs 66ms
+    max_distance = flying_points_filter_checking_range
+    minmum_point_num_in_range = flying_points_filter_minmum_points_in_checking_range + (width // 400) * (width // 400)
     checking_range_in_meter = max_distance * 1.2
     checking_range_limit = width // 50
     fx, cx, fy, cy = camera_kp[0][0], camera_kp[0][2], camera_kp[1][1], camera_kp[1][2]
@@ -239,24 +253,35 @@ def depth_filter(depth_map, depth_map_raw, height, width, camera_kp):
                 checking_range_in_pix_x = min(checking_range_in_pix_x, checking_range_limit)
                 checking_range_in_pix_y = min(checking_range_in_pix_y, checking_range_limit)
                 is_not_flying_point_flag = 0
+                max_fast_jump_point = checking_range_in_pix_x
                 for i in range(h-checking_range_in_pix_y, min(height, h+checking_range_in_pix_y+1)):
                     for j in range(w-checking_range_in_pix_x, min(width, w+checking_range_in_pix_x+1)):
-                        curr_x = depth_map_raw[i,j] * (j - cx) / fx
-                        curr_y = depth_map_raw[i,j] * (i - cy) / fy
-                        distance = np.square(curr_x - point_x) + np.square(curr_y - point_y) + np.square(depth_map_raw[h,w] - depth_map_raw[i,j])
-                        if distance < np.square(max_distance): is_not_flying_point_flag += 1
+                        z_diff = abs(depth_map_raw[h,w] - depth_map_raw[i,j])
+                        if depth_map_raw[i,j] != 0.0 and z_diff < max_distance:
+                            if use_3d_distance:
+                                curr_x = depth_map_raw[i,j] * (j - cx) / fx
+                                curr_y = depth_map_raw[i,j] * (i - cy) / fy
+                                distance = np.square(curr_x - point_x) + np.square(curr_y - point_y) + np.square(z_diff)
+                                if distance < np.square(max_distance): is_not_flying_point_flag += 1
+                            else:
+                                is_not_flying_point_flag += 1
+                        else:
+                            if i == h and j > w and max_fast_jump_point==checking_range_in_pix_x:
+                                max_fast_jump_point = j-w
                 if is_not_flying_point_flag <= minmum_point_num_in_range: # unvalid the point
                     depth_map[h,w] = 0
                 elif is_not_flying_point_flag >= checking_range_in_pix_x * checking_range_in_pix_y - 1:
-                    w += checking_range_in_pix_x
+                    w += max_fast_jump_point
                     continue
             w += 1
 
 @numba.jit  ((numba.float32[:,:], numba.int64, numba.int64), nopython=True, parallel=use_parallel_computing, nogil=True, cache=True)
-def depth_avg_filter(depth_map, height, width):
-    filter_max_length = depth_avg_filter_max_length
+def depth_filter(depth_map, height, width):
+    # a filter to smothing the image while preserves local structure
+    # has similar effect as bilateral filter but must faster
+    filter_max_length = depth_filter_max_length
     filter_weights = np.array([1.0, 0.8, 0.6, 0.5, 0.4, 0.2, 0.1])
-    filter_thres = depth_avg_filter_unvalid_thres
+    filter_thres = depth_filter_unvalid_thres
     # horizontal
     for h in prange(height): 
         for w in range(width):
@@ -298,7 +323,7 @@ global_reading_img_time = 0
 img_phase = None # will be faster as global variable(will not free mem every call)
 img_index = None
 def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, images=None):
-    global global_reading_img_time, img_phase, img_index
+    global global_reading_img_time, img_phase, img_index, roughly_projector_area_ratio_in_image
     unvalid_thres = 0
     save_mid_res = save_mid_res_for_visulize
     image_seq_start_index = default_image_seq_start_index
@@ -306,10 +331,10 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
     if images is None:
         fname = image_path + str(image_seq_start_index) + appendix
         if not os.path.exists(fname): image_seq_start_index = 0
-        ### read projector fully open and fully close images
+        # read projector fully open and fully close images
         prj_area_posi = cv2.imread(image_path + str(image_seq_start_index) + appendix, cv2.IMREAD_UNCHANGED)
         prj_area_nega = cv2.imread(image_path + str(image_seq_start_index+1) + appendix, cv2.IMREAD_UNCHANGED)
-        ### read gray code and phase shift images
+        # read gray code and phase shift images
         images_graycode = []
         for i in range(image_seq_start_index+2, image_seq_start_index+10):  # (0, 24) for pure gray code solutions in dataset
             fname = image_path + str(i) + appendix
@@ -328,7 +353,11 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
         images_phsft = images[image_seq_start_index+10:image_seq_start_index+14] # phase shift images
     prj_valid_map = prj_area_posi - prj_area_nega
     if rectifier.remap_x_left_scaled is None: _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)  # to build the internal LUT map
-    thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, unvalid_thres, 255, cv2.THRESH_BINARY)
+    thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, 1+phase_decoding_unvalid_thres//2, 255, cv2.THRESH_BINARY)
+    if roughly_projector_area_ratio_in_image is None:
+        total_pix, projector_area_pix = prj_valid_map_bin.nbytes, len(np.where(prj_valid_map_bin == 255)[0])
+        roughly_projector_area_ratio_in_image = np.sqrt(projector_area_pix/total_pix)
+        print("estimated valid_area_ratio: "+str(roughly_projector_area_ratio_in_image))
     if img_phase is None:
         img_phase = np.empty_like(prj_valid_map, dtype=np.float32)
         img_index = np.empty_like(img_phase, dtype=np.int16)
@@ -370,31 +399,32 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
         mid_res_wrapped_phase = (mid_res_wrapped_phase * 254.0)
         cv2.imwrite(res_path + "/mid_res_wrapped_phase"+appendix, mid_res_wrapped_phase.astype(np.uint8))
 
-    return rectified_belief_map, rectified_img_phase, camera_kd, sub_pixel_map
+    return prj_area_posi, rectified_belief_map, rectified_img_phase, camera_kd, sub_pixel_map
 
 
 def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
+    # return depth map in mili-meter
     global global_reading_img_time
     if rectifier is None: rectifier = StereoRectify(scale=1.0, cali_file=pattern_path+'calib.yml')
     if images is not None: images_left, images_right = images[0], images[1]
     else: images_left, images_right = None, None
     ### Rectify and Decode 
     pipe_start_time = start_time = time.time()
-    belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = index_decoding_from_images(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left)
-    belief_map_right, img_index_right, camera_kd_r, img_index_right_sub_px = index_decoding_from_images(pattern_path, '_r.bmp', rectifier=rectifier, res_path=res_path, images=images_right)
-    print("- Read image and decoding in total: %.3f s" % (time.time() - start_time))
-    # get camera parameters
+    gray_left, belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = index_decoding_from_images(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left)
+    _, belief_map_right, img_index_right, camera_kd_r, img_index_right_sub_px = index_decoding_from_images(pattern_path, '_r.bmp', rectifier=rectifier, res_path=res_path, images=images_right)
+    print("- left and right decoding in total: %.3f s" % (time.time() - start_time - global_reading_img_time))
+    # Get camera parameters
     fx = camera_kd_l[0][0]
     cx, cx_r = camera_kd_l[0][2], camera_kd_r[0][2]
     dmap_base = cx_r - cx
     cam_transform = np.array(rectifier.T)[:,0]
-    height, width = img_index_left.shape[:2]
+    height, width = gray_left.shape[:2]
     baseline = np.linalg.norm(cam_transform)  # * ( 0.8/(0.8+0.05*0.001) )  # = 0.9999375039060059
     ### Infer DepthMap from Index Matching
-    unoptimized_depth_map = np.zeros_like(img_index_left, dtype=np.float32)
-    depth_map = np.zeros_like(img_index_left, dtype=np.float32)
+    unoptimized_depth_map = np.zeros_like(gray_left, dtype=np.float32)
+    depth_map = np.zeros_like(gray_left, dtype=np.float32)
     start_time = time.time()
-    gen_depth_from_index_matching(unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right)
+    gen_depth_from_index_matching(unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right, roughly_projector_area_ratio_in_image)
     print("index matching and depth map generating: %.3f s" % (time.time() - start_time))
     start_time = time.time()
     optimize_dmap_using_sub_pixel_map(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px)
@@ -402,11 +432,11 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     ### Run Depth Map Filter
     depth_map_raw = depth_map.copy()  # save raw depth map
     start_time = time.time()
-    depth_filter(depth_map, depth_map_raw, height, width, camera_kd_l.astype(np.float32))
+    flying_points_filter(depth_map, depth_map_raw, height, width, camera_kd_l.astype(np.float32))
     print("flying point filter: %.3f s" % (time.time() - start_time))
-    if use_depth_avg_filter:
+    if use_depth_filter:
         start_time = time.time()
-        depth_avg_filter(depth_map, height, width)
+        depth_filter(depth_map, height, width)
         print("depth avg filter: %.3f s" % (time.time() - start_time))
     print("- Total time: %.3f s" % (time.time() - pipe_start_time))
     print("- Total time except reading imgs: %.3f s" % (time.time() - pipe_start_time - global_reading_img_time))
@@ -427,14 +457,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
         cv2.imwrite(res_path + "/ph_correspondence_r.png", images_phsft_right_v)
     ### Prepare results
     depth_map_mm = depth_map * 1000
-    global default_image_seq_start_index
-    if images is None:
-        fname = pattern_path + str(default_image_seq_start_index) + "_l.bmp"
-        if not os.path.exists(fname): default_image_seq_start_index = 0
-        gray_img = cv2.imread(pattern_path + str(default_image_seq_start_index) + "_l.bmp", cv2.IMREAD_UNCHANGED)
-    else:
-        gray_img = images_left[default_image_seq_start_index]
-    gray_img = rectifier.rectify_image(gray_img)
+    gray_img = rectifier.rectify_image(gray_left)
     return gray_img, depth_map_mm, camera_kd_l
 
 
@@ -451,7 +474,9 @@ if __name__ == "__main__":
     ### build up runing parameters and run
     res_path = image_path + r'\res' if sys.platform == 'win32' else image_path + '/res'
     if not os.path.exists(res_path): os.system("mkdir " + res_path)
-    gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path)
+
+    rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
+    gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     
     def report_depth_error(depth_img, depth_gt):
         gray_img = cv2.imread(image_path + str(default_image_seq_start_index) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
@@ -475,18 +500,18 @@ if __name__ == "__main__":
         error_img = error_img[np.where((error_img<0.25)&(error_img>-0.25))]
         print("valid points rate below 0.25mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
         print("average_error(mm):" + str(np.average(abs(error_img))))
-
-        # write error map
-        error_map_thres = 0.25
-        unvalid_points = np.where(depth_img<=1.0)
-        diff = depth_img - depth_gt
-        depth_img_show_error = (depth_img * 255.0 / 2000.0).astype(np.uint8)
-        error_part = depth_img_show_error.copy()
-        error_part[np.where((diff>error_map_thres)|(diff<-error_map_thres))] = 255
-        error_part[unvalid_points] = 0
-        depth_img_show_error = cv2.cvtColor(depth_img_show_error, cv2.COLOR_GRAY2RGB)
-        depth_img_show_error[:,:,2] = error_part
-        cv2.imwrite(res_path + "/error_map.png", depth_img_show_error)
+        if save_mid_res_for_visulize:
+            # write error map
+            error_map_thres = 0.25
+            unvalid_points = np.where(depth_img<=1.0)
+            diff = depth_img - depth_gt
+            depth_img_show_error = (depth_img * 255.0 / 2000.0).astype(np.uint8)
+            error_part = depth_img_show_error.copy()
+            error_part[np.where((diff>error_map_thres)|(diff<-error_map_thres))] = 255
+            error_part[unvalid_points] = 0
+            depth_img_show_error = cv2.cvtColor(depth_img_show_error, cv2.COLOR_GRAY2RGB)
+            depth_img_show_error[:,:,2] = error_part
+            cv2.imwrite(res_path + "/error_map.png", depth_img_show_error)
 
     if os.path.exists(image_path + "depth_gt.exr"):
         gt_depth = cv2.imread(image_path + "depth_gt.exr", cv2.IMREAD_UNCHANGED)[:,:,0]
@@ -494,6 +519,9 @@ if __name__ == "__main__":
         rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
         gt_depth_rectified = rectifier.rectify_image(gt_depth) #, interpolation=cv2.INTER_NEAREST
         report_depth_error(depth_map_mm, gt_depth_rectified)
+    else:
+        valid_points = np.where(depth_map_mm>=1.0)
+        print("valid points: " + str(len(valid_points[0])))
     
     ### build point cloud and visualize
     if visulize_res:

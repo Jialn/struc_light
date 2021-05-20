@@ -292,13 +292,13 @@ __global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int
     }
 }
 
-__global__ void depth_avg_filter(float *depth_map, int *height_array, int *width_array, int *depth_avg_filter_max_length, float *depth_avg_filter_unvalid_thres)
+__global__ void depth_filter(float *depth_map, int *height_array, int *width_array, int *depth_filter_max_length, float *depth_filter_unvalid_thres)
 {
     // a point could be considered as not flying when: points in checking range below max_distance > minmum num 
     int height = height_array[0];
     int width = width_array[0];
-    int filter_max_length = depth_avg_filter_max_length[0];
-    float filter_thres = depth_avg_filter_unvalid_thres[0];
+    int filter_max_length = depth_filter_max_length[0];
+    float filter_thres = depth_filter_unvalid_thres[0];
     const float filter_weights[6] = {1.0, 0.8, 0.6, 0.5, 0.4, 0.2};
 
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;

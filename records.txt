@@ -1,5 +1,79 @@
 
 -WorkPC linux AMD TR 2950x
+
+GPU (Titan RTX):
+alloc gpu mem and copy src images into gpu: 0.008 s
+gray code decoding: 0.003 s
+phase decoding: 0.001 s
+rectify: 0.001 s
+alloc gpu mem and copy src images into gpu: 0.007 s
+gray code decoding: 0.003 s
+phase decoding: 0.001 s
+rectify: 0.001 s
+- left and right decoding in total: 0.027 s
+index matching and depth map generating: 0.019 s
+subpix optimize: 0.001 s
+flying point filter: 0.001 s
+depth avg filter: 0.001 s
+readout from gpu: 0.004 s
+- Total time: 0.172 s
+- Total time without reading imgs and pre-built rectify maps: 0.054 s
+valid points rate below 10mm: 2917864/3121565, 93.47439505504451%
+average_error(mm):0.11023043
+valid points rate below 1mm: 2903833/3121565, 93.02490897995077%
+average_error(mm):0.09875641
+valid points rate below 0.25mm: 2828953/3121565, 90.62611222255504%
+average_error(mm):0.09191155
+
+CPU (1 thread):
+build ndarrays for decoding: 0.012 s
+gray code decoding: 0.092 s
+phase decoding: 0.091 s
+rectify: 0.037 s
+build ndarrays for decoding: 0.009 s
+gray code decoding: 0.087 s
+phase decoding: 0.079 s
+rectify: 0.043 s
+- left and right decoding in total: 0.451 s
+index matching and depth map generating: 1.314 s
+subpix optimize: 0.014 s
+flying point filter: 0.264 s
+depth avg filter: 0.074 s
+- Total time: 2.334 s
+- Total time except reading imgs: 2.123 s
+valid points rate below 10mm: 2917961/3121565, 93.4775024707158%
+average_error(mm):0.109543726
+valid points rate below 1mm: 2905397/3121565, 93.07501205324893%
+average_error(mm):0.098977596
+valid points rate below 0.25mm: 2827840/3121565, 90.59045703036779%
+average_error(mm):0.09205295
+
+CPU (16 thread):
+build ndarrays for decoding: 0.012 s
+gray code decoding: 0.049 s
+phase decoding: 0.010 s
+rectify: 0.009 s
+build ndarrays for decoding: 0.010 s
+gray code decoding: 0.047 s
+phase decoding: 0.008 s
+rectify: 0.009 s
+- left and right decoding in total: 0.155 s
+index matching and depth map generating: 0.151 s
+subpix optimize: 0.002 s
+flying point filter: 0.030 s
+depth avg filter: 0.009 s
+- Total time: 0.566 s
+- Total time except reading imgs: 0.353 s
+valid points rate below 10mm: 2917961/3121565, 93.4775024707158%
+average_error(mm):0.109543726
+valid points rate below 1mm: 2905397/3121565, 93.07501205324893%
+average_error(mm):0.098977596
+valid points rate below 0.25mm: 2827840/3121565, 90.59045703036779%
+average_error(mm):0.09205295
+
+
+------------------------------------------------------
+-WorkPC linux AMD TR 2950x
 alloc gpu mem and copy src images into gpu: 0.007 s
 gray code decoding: 0.003 s
 phase decoding: 0.001 s
