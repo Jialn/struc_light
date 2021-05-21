@@ -367,6 +367,9 @@ if __name__ == "__main__":
     ### build point cloud and visualize
     if visulize_res:
         import open3d as o3d
+        import depth_map_utils as utils
+        # depth_map_fill, _ = utils.fill_in_multiscale(depth_map=depth_map_mm*0.001, max_depth=2.0)
+        # depth_map_fill = depth_map_fill * 1000.0
         rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
             o3d.geometry.Image(gray.astype(np.uint8)),
             o3d.geometry.Image(depth_map_mm.astype(np.float32)),
@@ -374,10 +377,7 @@ if __name__ == "__main__":
             depth_trunc=6000.0)
         h, w = gray.shape[:2]
         fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
-        pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx, cy))
-        # save point cloud
-        o3d.io.write_point_cloud(res_path + "/points.ply", pcd, write_ascii=False, compressed=False)
-        print("ply res saved to:" + res_path)
+        pcd = utils.gen_point_clouds_from_images(depth_map_mm, camera_kp, gray, save_path=res_path)
         pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         pcd.translate(np.zeros(3), relative=False)
         o3d.visualization.draw(geometry=pcd, width=1600, height=900, point_size=1)
