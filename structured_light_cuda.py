@@ -14,7 +14,7 @@ from stereo_rectify import StereoRectify
 ### parameters 
 phase_decoding_unvalid_thres = 5  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
-                                  # e.g., 1, 2, 5 for low-expo real captured images; 20, 30, 40 for normal expo rendered images.
+                                  # e.g., 1, 2, 5 for low-expo real captured images; 5, 10, 20 for normal expo rendered images.
 remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0      # depth cutoff
 flying_points_filter_checking_range = 0.0025        # about 5-7 times of resolution per pxiel
@@ -49,8 +49,8 @@ depth_filter_cuda_kernel = cuda_module.get_function("depth_filter")
 optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
 convert_dmap_to_mili_meter = cuda_module.get_function("convert_dmap_to_mili_meter")
 
-def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map_bin, image_num, height,width, img_index, unvalid_thres):
-    gray_decode_cuda_kernel(src_imgs, cuda.In(avg_thres_posi), cuda.In(avg_thres_nega), cuda.In(prj_valid_map_bin),
+def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map, image_num, height,width, img_index, unvalid_thres):
+    gray_decode_cuda_kernel(src_imgs, cuda.In(avg_thres_posi), cuda.In(avg_thres_nega), cuda.In(prj_valid_map),
         cuda.In(np.int32(image_num)),cuda.In(np.int32(height)),cuda.In(np.int32(width)),
         img_index,cuda.In(np.int32(unvalid_thres)),
         block=(width//4, 1, 1), grid=(height*4, 1))
@@ -115,12 +115,14 @@ def from_gpu(gpu_data, size_sample, dtype):
 global_reading_img_time = 0
 img_phase = None # gpu array, will be faster as global variable(will not free mem every call)
 img_index = None
+prj_valid_map_left = None
+prj_valid_map_right = None
 gpu_remap_x_left = None
 gpu_remap_y_left = None
 gpu_remap_x_right = None
 gpu_remap_y_right = None
 def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, images=None):
-    global global_reading_img_time, img_phase, img_index, gpu_remap_x_left, gpu_remap_y_left, gpu_remap_x_right, gpu_remap_y_right, roughly_projector_area_ratio_in_image
+    global global_reading_img_time, img_phase, img_index, gpu_remap_x_left, gpu_remap_y_left, gpu_remap_x_right, gpu_remap_y_right, prj_valid_map_left, prj_valid_map_right, roughly_projector_area_ratio_in_image
     unvalid_thres = 0
     save_mid_res = save_mid_res_for_visulize
     image_seq_start_index = default_image_seq_start_index
@@ -160,12 +162,21 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
         cuda.memcpy_htod(gpu_remap_y_left,  rectify_map_y_left)
         cuda.memcpy_htod(gpu_remap_x_right, rectify_map_x_right)
         cuda.memcpy_htod(gpu_remap_y_right, rectify_map_y_right)
-    prj_valid_map = prj_area_posi - prj_area_nega
-    thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, 1+phase_decoding_unvalid_thres//2, 255, cv2.THRESH_BINARY)
-    if roughly_projector_area_ratio_in_image is None:
-        total_pix, projector_area_pix = prj_valid_map_bin.nbytes, len(np.where(prj_valid_map_bin == 255)[0])
-        roughly_projector_area_ratio_in_image = np.sqrt(projector_area_pix/total_pix)
-        print("estimated valid_area_ratio: "+str(roughly_projector_area_ratio_in_image))
+    if appendix == '_l.bmp':
+        if prj_valid_map_left is None:
+            prj_valid_map_left = (127+prj_area_posi//2) - prj_area_nega//2
+            thres, prj_valid_map_left = cv2.threshold(prj_valid_map_left, 128+phase_decoding_unvalid_thres//2, 255, cv2.THRESH_BINARY)
+        prj_valid_map = prj_valid_map_left
+        if roughly_projector_area_ratio_in_image is None:
+            total_pix, projector_area_pix = prj_valid_map.nbytes, len(np.where(prj_valid_map == 255)[0])
+            roughly_projector_area_ratio_in_image = np.sqrt(projector_area_pix/total_pix)
+            print("estimated valid_area_ratio: "+str(roughly_projector_area_ratio_in_image))
+    else:
+        if prj_valid_map_right is None:
+            prj_valid_map_right = (127+prj_area_posi//2) - prj_area_nega//2
+            thres, prj_valid_map_right = cv2.threshold(prj_valid_map_right, 128+phase_decoding_unvalid_thres//2, 255, cv2.THRESH_BINARY)
+        prj_valid_map = prj_valid_map_right
+
     if img_phase is None:
         img_phase = cuda.mem_alloc(prj_valid_map.nbytes*4)  # float32
         img_index = cuda.mem_alloc(prj_valid_map.nbytes*2)  # int16
@@ -188,7 +199,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
     print("alloc gpu mem and copy src images into gpu: %.3f s" % (time.time() - start_time))
     ### decoding
     start_time = time.time()
-    gray_decode_cuda(images_gray_src, prj_area_posi, prj_area_nega, prj_valid_map_bin, len(images_graycode), height,width, img_index, unvalid_thres)
+    gray_decode_cuda(images_gray_src, prj_area_posi, prj_area_nega, prj_valid_map, len(images_graycode), height,width, img_index, unvalid_thres)
     print("gray code decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res and res_path is not None:
         mid_res_corse_gray_index_raw = from_gpu(img_index, size_sample=prj_valid_map, dtype=np.int16) // 2

@@ -88,11 +88,11 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     float depth_cutoff_near = depth_cutoff[0], depth_cutoff_far = depth_cutoff[1];
     int width = width_array[0];
     float projector_area_ratio = roughly_projector_area_in_image[0];
-    float index_thres_for_matching = 0.25 + (1280.0 / width) / projector_area_ratio;  //the smaller projector_area in image, the larger index_offset cloud be
+    float index_thres_for_matching = 1.5 * 1280.0 / (width*projector_area_ratio);  //the smaller projector_area in image, the larger index_offset cloud be
     int right_corres_point_offset_range = (1.333 * projector_area_ratio * width) / 128;
     bool check_outliers = (remove_possibly_outliers_when_matching[0] != 0);
     // if another pixel has similar index(<index_thres_for_outliers_checking) has a distance > max_allow_pixel_per_index, consider it's an outlier 
-    float max_allow_pixel_per_index_for_outliers_checking = 1.5 + 1.5 * projector_area_ratio * width / 1280.0;
+    float max_allow_pixel_per_index_for_outliers_checking = 2.5 + 1.0 * projector_area_ratio * width / 1280.0;
     float index_thres_for_outliers_checking = index_thres_for_matching * 1.2;
 
     int h = blockIdx.x, stride = blockDim.x, offset = threadIdx.x;  //blockIdx.x is current working line; blockDim.x is stride
@@ -111,7 +111,8 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         // find the nearest left and right corresponding points in right image
         int most_corres_pts_l = -1, most_corres_pts_r = -1;
         int checking_left_edge = 0, checking_right_edge = width;
-        int cnt_l = 0, cnt_r = 0, average_corres_position_in_thres_l = 0, average_corres_position_in_thres_r = 0;
+        int cnt_l = 0, cnt_r = 0;
+        float average_corres_position_in_thres_l = 0, average_corres_position_in_thres_r = 0;
         if (last_right_corres_point > 0) {
             checking_left_edge = last_right_corres_point - right_corres_point_offset_range;
             checking_right_edge = last_right_corres_point + right_corres_point_offset_range + stride;
@@ -168,7 +169,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         if (cnt_l != 0) average_corres_position_in_thres_l = average_corres_position_in_thres_l / cnt_l;
         if (cnt_r != 0) average_corres_position_in_thres_r = average_corres_position_in_thres_r / cnt_r;
         // check possiblely outliers using max_allow_pixel_per_index and belief_map
-        if (check_outliers==true) {  // & belief_map_r[line_start_addr_offset+(int)(w_r+0.499999)]==0
+        if (check_outliers==true & belief_map_r[line_start_addr_offset+(int)(w_r+0.499999)]==0) {  // & belief_map_r[line_start_addr_offset+(int)(w_r+0.499999)]==0
             if (most_corres_pts_l != -1 & abs((float)(most_corres_pts_l-w_r)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
             if (most_corres_pts_r != -1 & abs((float)(most_corres_pts_r-w_r)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
             if (average_corres_position_in_thres_l != 0 & abs((float)(average_corres_position_in_thres_l-w_r)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
@@ -182,7 +183,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         if (check_outliers==true & belief_map_l[curr_pix_idx]==0) {
             for (int i=0; i < width; i++) {
                 if ((line_l[w]-index_thres_for_outliers_checking <= line_l[i]) & (line_l[i] <= line_l[w]+index_thres_for_outliers_checking)) {
-                    if (abs((float)(w-i)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
+                    if (abs((float)(w_l-i)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
                 }
             }
         }
