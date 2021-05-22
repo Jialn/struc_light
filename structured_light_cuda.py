@@ -32,6 +32,8 @@ default_image_seq_start_index = 24      # in some datasets, (0, 24) are for pure
 save_mid_res_for_visulize = False
 visulize_res = True
 
+enable_depth_map_post_processing = True
+
 
 ### read and compile cu file
 dir_path = os.path.dirname(os.path.realpath(__file__))  # dir of this file
@@ -319,6 +321,10 @@ if __name__ == "__main__":
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     
+    if enable_depth_map_post_processing:
+        import depth_map_utils as utils
+        depth_map_mm = utils.depth_map_post_processing(depth_map_mm)
+
     def report_depth_error(depth_img, depth_gt):
         gray_img = cv2.imread(image_path + str(default_image_seq_start_index) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
         gray_img_dark = cv2.imread(image_path + str(default_image_seq_start_index+1) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
@@ -368,14 +374,6 @@ if __name__ == "__main__":
     if visulize_res:
         import open3d as o3d
         import depth_map_utils as utils
-        # depth_map_fill, _ = utils.fill_in_multiscale(depth_map=depth_map_mm*0.001, max_depth=2.0)
-        # depth_map_fill = depth_map_fill * 1000.0
-        rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
-            o3d.geometry.Image(gray.astype(np.uint8)),
-            o3d.geometry.Image(depth_map_mm.astype(np.float32)),
-            depth_scale=1.0,
-            depth_trunc=6000.0)
-        h, w = gray.shape[:2]
         fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
         pcd = utils.gen_point_clouds_from_images(depth_map_mm, camera_kp, gray, save_path=res_path)
         pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])

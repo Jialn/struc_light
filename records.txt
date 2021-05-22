@@ -1,4 +1,21 @@
+HomePC win
+- enable post-process
+valid points rate below 10mm: 2916181/3121565, 93.4204797913867%
+average_error(mm):0.109722905
+valid points rate below 1mm: 2905046/3121565, 93.06376769344864%
+average_error(mm):0.0993842
+valid points rate below 0.25mm: 2826467/3121565, 90.5464726827729%
+average_error(mm):0.091920175
 
+- disable
+valid points rate below 10mm: 2920775/3121565, 93.56764956039679%
+average_error(mm):0.11230813
+valid points rate below 1mm: 2904861/3121565, 93.05784117902398%
+average_error(mm):0.09882678
+valid points rate below 0.25mm: 2829478/3121565, 90.64293070943582%
+average_error(mm):0.09191788
+
+--------------------------
 -WorkPC linux AMD TR 2950x
 
 GPU (Titan RTX):
