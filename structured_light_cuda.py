@@ -10,9 +10,10 @@ import pycuda.driver as cuda
 import pycuda.autoinit
 from pycuda.compiler import SourceModule
 from stereo_rectify import StereoRectify
+import depth_map_utils as utils
 
 ### parameters 
-phase_decoding_unvalid_thres = 5  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
+phase_decoding_unvalid_thres = 3  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
                                   # e.g., 1, 2, 5 for low-expo real captured images; 5, 10, 20 for normal expo rendered images.
 remove_possibly_outliers_when_matching = True
@@ -273,15 +274,21 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     if use_depth_filter:
         start_time = time.time()
         depth_filter_cuda(gpu_depth_map_filtered, height, width)
-        print("depth avg filter: %.3f s" % (time.time() - start_time))
+        print("depth smothing filter: %.3f s" % (time.time() - start_time))
     # readout
-    convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1));
+    convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1))
+
     start_time = time.time()
     cuda.memcpy_dtoh(depth_map, gpu_depth_map_filtered)
     print("readout from gpu: %.3f s" % (time.time() - start_time))
 
     print("- Total time: %.3f s" % (time.time() - pipe_start_time))
     print("- Total time without reading imgs and pre-built rectify maps: %.3f s" % (time.time() - pipe_start_time - global_reading_img_time))
+
+    if enable_depth_map_post_processing:
+        start_time = time.time()
+        depth_map = utils.depth_map_post_processing(depth_map)
+        print("depth post processing: %.3f s" % (time.time() - start_time))
     global_reading_img_time = 0
     ### Save Mid Results for visualizing
     if save_mid_res_for_visulize:   
@@ -321,9 +328,6 @@ if __name__ == "__main__":
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     
-    if enable_depth_map_post_processing:
-        import depth_map_utils as utils
-        depth_map_mm = utils.depth_map_post_processing(depth_map_mm)
 
     def report_depth_error(depth_img, depth_gt):
         gray_img = cv2.imread(image_path + str(default_image_seq_start_index) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
@@ -373,8 +377,8 @@ if __name__ == "__main__":
     ### build point cloud and visualize
     if visulize_res:
         import open3d as o3d
-        import depth_map_utils as utils
         fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
+        if os.path.exists(image_path + "color.bmp"): gray = cv2.imread(image_path + "color.bmp")
         pcd = utils.gen_point_clouds_from_images(depth_map_mm, camera_kp, gray, save_path=res_path)
         pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         pcd.translate(np.zeros(3), relative=False)

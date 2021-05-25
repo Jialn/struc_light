@@ -6,10 +6,14 @@ def gen_point_clouds_from_images(depth, camera_kp, image, save_path=None):
     """
     import open3d as o3d
     import copy
-    # rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)  # if image is color, convert bgr to rgb
+    convert_rgb_to_intensity = True
+    if len(image.shape) == 3:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        convert_rgb_to_intensity = False
     rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
-        o3d.geometry.Image(image.astype(np.uint8)),
+        o3d.geometry.Image(image),
         o3d.geometry.Image(depth.astype(np.float32)),
+        convert_rgb_to_intensity=convert_rgb_to_intensity,
         depth_scale=1.0,
         depth_trunc=6000.0)
     h, w = image.shape[:2]

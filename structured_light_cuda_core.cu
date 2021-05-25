@@ -32,7 +32,7 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
 {
     float phsift_pattern_period_per_pixel = phsift_pattern_period_per_pixel_array[0];
     float unvalid_thres_diff = unvalid_thres[0];
-    float outliers_checking_thres_diff = 4 * (1.0+unvalid_thres_diff); //above this, will skip outlier checking
+    float outliers_checking_thres_diff = 16.0 + unvalid_thres_diff; //above this, will skip outlier checking
     float pi = 3.14159265358979;
 
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
