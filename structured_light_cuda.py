@@ -13,7 +13,7 @@ from stereo_rectify import StereoRectify
 import depth_map_utils as utils
 
 ### parameters 
-phase_decoding_unvalid_thres = 2  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
+phase_decoding_unvalid_thres = 1  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
                                   # e.g., 1, 2, 5 for low-expo real captured images; 5, 10, 20 for normal expo rendered images.
 use_morph_ex_for_valid_map = False                 # using morph for generating valid map of projector area
