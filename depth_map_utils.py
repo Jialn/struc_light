@@ -33,6 +33,10 @@ FULL_KERNEL_3 = np.ones((3, 3), np.uint8)
 FULL_KERNEL_5 = np.ones((5, 5), np.uint8)
 FULL_KERNEL_7 = np.ones((7, 7), np.uint8)
 FULL_KERNEL_9 = np.ones((9, 9), np.uint8)
+FULL_KERNEL_16 = np.ones((16, 16), np.uint8)
+def rect_kernel(m, n):
+    return cv2.getStructuringElement(cv2.MORPH_RECT, (m, n))
+
 # 3x3 cross kernel
 CROSS_KERNEL_3 = np.asarray(
     [
@@ -58,6 +62,8 @@ DIAMOND_KERNEL_5 = np.array(
         [0, 1, 1, 1, 0],
         [0, 0, 1, 0, 0],
     ], dtype=np.uint8)
+def cross_kernel(n):
+    return cv2.getStructuringElement(cv2.MORPH_CROSS, (n, n))
 def depth_map_post_processing(depth_map, max_depth=3000.0,
                               use_morphology_closure=False, large_hole_Fill=False, use_median_filter=True):
     """Optional fill small holes and additional noise removal that provides better qualitative results.

@@ -16,10 +16,11 @@ import depth_map_utils as utils
 phase_decoding_unvalid_thres = 3  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
                                   # e.g., 1, 2, 5 for low-expo real captured images; 5, 10, 20 for normal expo rendered images.
+use_morph_ex_for_valid_map = False                 # using morph for generating valid map of projector area
 remove_possibly_outliers_when_matching = True
-depth_cutoff_near, depth_cutoff_far = 0.1, 2.0      # depth cutoff
-flying_points_filter_checking_range = 0.0025        # about 5-7 times of resolution per pxiel
-flying_points_filter_minmum_points_in_checking_range = 2  # including the point itself, will also add a ratio of width // 400
+depth_cutoff_near, depth_cutoff_far = 0.1, 2.0     # depth cutoff
+flying_points_filter_checking_range = 0.003        # about 5-7 times of resolution per pxiel
+flying_points_filter_minmum_points_in_checking_range = 5  # including the point itself, will also add a ratio of width // 400
 use_depth_filter = True                             # a filter that smothing the image while preserves local structure
 depth_filter_max_length = 3                         # from 0 - 6
 depth_filter_unvalid_thres = 0.001
@@ -78,7 +79,7 @@ def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left,
         img_index_left_sub_px, img_index_right_sub_px, belief_map_left,belief_map_right, 
         cuda.In(np.float32(roughly_projector_area_ratio)), cuda.In(np.float32([depth_cutoff_near, depth_cutoff_far])),
         cuda.In(np.int32(remove_possibly_outliers_when_matching)),
-        block=(6, 16, 1), grid=(height, 1))
+        block=(4, 16, 1), grid=(height, 1))
 
 def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px):
     optimize_dmap_using_sub_pixel_map_cuda_kernel(unoptimized_depth_map,depth_map,
@@ -86,16 +87,16 @@ def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, hei
         img_index_left_sub_px,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def flying_points_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd_l):
+def flying_points_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd_l, belief_map):
     flying_points_filter_cuda_kernel(depth_map, depth_map_raw,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
-        cuda.In(camera_kd_l), cuda.In(np.float32(flying_points_filter_checking_range)), cuda.In(np.int32(flying_points_filter_minmum_points_in_checking_range)),
+        cuda.In(camera_kd_l), cuda.In(np.float32(flying_points_filter_checking_range)), cuda.In(np.int32(flying_points_filter_minmum_points_in_checking_range)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def depth_filter_cuda(depth_map, height, width):
+def depth_filter_cuda(depth_map, height, width, belief_map):
     depth_filter_cuda_kernel(depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
-        cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unvalid_thres)),
+        cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unvalid_thres)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 # ### for simple pycuda test
@@ -165,20 +166,38 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
         cuda.memcpy_htod(gpu_remap_y_left,  rectify_map_y_left)
         cuda.memcpy_htod(gpu_remap_x_right, rectify_map_x_right)
         cuda.memcpy_htod(gpu_remap_y_right, rectify_map_y_right)
+    
+    def build_prj_valid_map(posi, nega, res_path, appendix):
+        valid_map_diff = posi.astype(np.int16) - nega.astype(np.int16)
+        if use_morph_ex_for_valid_map:
+            kernel = utils.rect_kernel(200,200) # cross_kernel(200)
+            valid_map_morph = cv2.morphologyEx(valid_map_diff, cv2.MORPH_CLOSE, kernel, iterations=1)
+            valid_map_morph = cv2.morphologyEx(valid_map_morph, cv2.MORPH_OPEN, kernel, iterations=1)
+            thres_bin = np.mean(valid_map_morph)
+            prj_valid_map_bin = cv2.threshold(valid_map_morph, thres_bin, 255, cv2.THRESH_BINARY)
+        else:
+            thres_bin = 2+phase_decoding_unvalid_thres
+            thres, prj_valid_map_bin = cv2.threshold(valid_map_diff, thres_bin, 255, cv2.THRESH_BINARY)
+        if save_mid_res_for_visulize:
+            if use_morph_ex_for_valid_map:
+                cv2.imwrite(res_path + "/prj_valid_map" + appendix[:2] + "_diff.png", valid_map_diff.astype(np.uint8))
+                cv2.imwrite(res_path + "/prj_valid_map" + appendix[:2] + "_moex.png", valid_map_morph.astype(np.uint8))
+            cv2.imwrite(res_path + "/prj_valid_map" + appendix[:2] + "_bin.png", prj_valid_map_bin.astype(np.uint8))
+        return prj_valid_map_bin.astype(np.uint8)
+
     if appendix == '_l.bmp':
         if prj_valid_map_left is None:
-            prj_valid_map_left = (127+prj_area_posi//2) - prj_area_nega//2
-            thres, prj_valid_map_left = cv2.threshold(prj_valid_map_left, 128+phase_decoding_unvalid_thres//2, 255, cv2.THRESH_BINARY)
-        prj_valid_map = prj_valid_map_left
+            prj_valid_map_left = build_prj_valid_map(prj_area_posi, prj_area_nega, res_path, appendix)
+        prj_valid_map = prj_valid_map_left.astype(np.uint8)
         if roughly_projector_area_ratio_in_image is None:
             total_pix, projector_area_pix = prj_valid_map.nbytes, len(np.where(prj_valid_map == 255)[0])
             roughly_projector_area_ratio_in_image = np.sqrt(projector_area_pix/total_pix)
             print("estimated valid_area_ratio: "+str(roughly_projector_area_ratio_in_image))
     else:
         if prj_valid_map_right is None:
-            prj_valid_map_right = (127+prj_area_posi//2) - prj_area_nega//2
-            thres, prj_valid_map_right = cv2.threshold(prj_valid_map_right, 128+phase_decoding_unvalid_thres//2, 255, cv2.THRESH_BINARY)
-        prj_valid_map = prj_valid_map_right
+            prj_valid_map_right = build_prj_valid_map(prj_area_posi, prj_area_nega, res_path, appendix)
+            thres, prj_valid_map_right = cv2.threshold(prj_valid_map_right, 20+phase_decoding_unvalid_thres, 255, cv2.THRESH_BINARY)
+        prj_valid_map = prj_valid_map_right.astype(np.uint8)
 
     if img_phase is None:
         img_phase = cuda.mem_alloc(prj_valid_map.nbytes*4)  # float32
@@ -215,10 +234,8 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
     print("phase decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res:
         # check for the unrectified phase
-        images_phsft_left_v = (from_gpu(img_phase, size_sample=prj_valid_map, dtype=np.float32)*4.0).astype(np.uint8)
-        images_phsft_right_v = (from_gpu(img_phase, size_sample=prj_valid_map, dtype=np.float32)*4.0).astype(np.uint8)
-        cv2.imwrite(res_path + "/ph_correspondence_l_unrectified.png", images_phsft_left_v)
-        cv2.imwrite(res_path + "/ph_correspondence_r_unrectified.png", images_phsft_right_v)
+        images_phsft_v = (from_gpu(img_phase, size_sample=prj_valid_map, dtype=np.float32)*4.0).astype(np.uint8)
+        cv2.imwrite(res_path + "/ph_correspondence_l" + appendix[:2] + "_unrectified.png", images_phsft_v)
     
     ### rectify the decoding res, accroding to left or right
     start_time = time.time()
@@ -269,11 +286,11 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     print("subpix optimize: %.3f s" % (time.time() - start_time))
     ### Run Depth Map Filter
     start_time = time.time()
-    flying_points_filter_cuda(gpu_depth_map_filtered, gpu_depth_map_raw, height, width, camera_kd_l.astype(np.float32))
+    flying_points_filter_cuda(gpu_depth_map_filtered, gpu_depth_map_raw, height, width, camera_kd_l.astype(np.float32), belief_map_left)
     print("flying point filter: %.3f s" % (time.time() - start_time))
     if use_depth_filter:
         start_time = time.time()
-        depth_filter_cuda(gpu_depth_map_filtered, height, width)
+        depth_filter_cuda(gpu_depth_map_filtered, height, width, belief_map_left)
         print("depth smothing filter: %.3f s" % (time.time() - start_time))
     # readout
     convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1))
@@ -382,4 +399,4 @@ if __name__ == "__main__":
         pcd = utils.gen_point_clouds_from_images(depth_map_mm, camera_kp, gray, save_path=res_path)
         pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         pcd.translate(np.zeros(3), relative=False)
-        o3d.visualization.draw(geometry=pcd, width=1600, height=900, point_size=1)
+        o3d.visualization.draw(geometry=pcd, width=1800, height=1000, point_size=1)

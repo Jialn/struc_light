@@ -32,12 +32,13 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
 {
     float phsift_pattern_period_per_pixel = phsift_pattern_period_per_pixel_array[0];
     float unvalid_thres_diff = unvalid_thres[0];
-    float outliers_checking_thres_diff = 16.0 + unvalid_thres_diff; //above this, will skip outlier checking
-    float pi = 3.14159265358979;
+    float outliers_checking_diff_thres = 10.0 + unvalid_thres_diff; //above this, will skip outlier checking
+    const float pi = 3.14159265358979;
 
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if (img_index[idx] == -1) {
         img_phase[idx] = nanf("");
+        img_index[idx] = 0;  //reuse img_index as belief map
         return;
     }
     float i1 = src[idx];
@@ -45,9 +46,10 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
     float i3 = src[idx + 2 * height[0] * width[0]];
     float i4 = src[idx + 3 * height[0] * width[0]];
     bool unvalid_flag = (abs(i4 - i2) <= unvalid_thres_diff & abs(i3 - i1) <= unvalid_thres_diff);
-    bool need_outliers_checking_flag = (abs(i4 - i2) <= outliers_checking_thres_diff & abs(i3 - i1) <= outliers_checking_thres_diff);
+    bool need_outliers_checking_flag = (abs(i4 - i2) <= outliers_checking_diff_thres & abs(i3 - i1) <= outliers_checking_diff_thres);
     if (unvalid_flag) {
         img_phase[idx] = nanf("");
+        img_index[idx] = 0;  //reuse img_index as belief map
         return;
     }
     float phase = - atan2f(i4-i2, i3-i1) + pi;
@@ -91,7 +93,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     float index_thres_for_matching = 1.5 * 1280.0 / (width*projector_area_ratio);  //the smaller projector_area in image, the larger index_offset cloud be
     int right_corres_point_offset_range = (1.333 * projector_area_ratio * width) / 128;
     bool check_outliers = (remove_possibly_outliers_when_matching[0] != 0);
-    // if another pixel has similar index(<index_thres_for_outliers_checking) has a distance > max_allow_pixel_per_index, consider it's an outlier 
+    // if another pixel has similar index( < index_thres_for_outliers_checking) has a distance > max_allow_pixel_per_index, consider it's an outlier 
     float max_allow_pixel_per_index_for_outliers_checking = 2.5 + 1.0 * projector_area_ratio * width / 1280.0;
     float index_thres_for_outliers_checking = index_thres_for_matching * 1.2;
 
@@ -139,6 +141,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         if (most_corres_pts_l == -1 & most_corres_pts_r == -1) {
             for (int i=0; i < width; i++) { 
                 if (isnan(line_r[i])) continue;
+                // if (!belief_map_r[line_start_addr_offset+i]) continue;
                 if ((line_l[w]-index_thres_for_matching <= line_r[i]) & (line_r[i] <= line_l[w])) {
                     if (most_corres_pts_l==-1) most_corres_pts_l = i;
                     else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
@@ -240,7 +243,7 @@ __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optim
     }
 }
 
-__global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int *height_array, int *width_array, float *camera_kp, float *depth_filter_max_distance, int *depth_filter_minmum_points_in_checking_range)
+__global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int *height_array, int *width_array, float *camera_kp, float *depth_filter_max_distance, int *depth_filter_minmum_points_in_checking_range, int *belief_map)
 {
     // a point could be considered as not flying when: points in checking range below max_distance > minmum num 
     const bool use_3d_distance = false; // use 3D distance (slower but more precisely) or only distance of axis-z to check flying points
@@ -294,7 +297,7 @@ __global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int
     }
 }
 
-__global__ void depth_filter(float *depth_map, int *height_array, int *width_array, int *depth_filter_max_length, float *depth_filter_unvalid_thres)
+__global__ void depth_filter(float *depth_map, int *height_array, int *width_array, int *depth_filter_max_length, float *depth_filter_unvalid_thres, int *belief_map)
 {
     // a point could be considered as not flying when: points in checking range below max_distance > minmum num 
     int height = height_array[0];
@@ -314,6 +317,8 @@ __global__ void depth_filter(float *depth_map, int *height_array, int *width_arr
         bool stop_flag = false;
         for (int i=1; i< filter_max_length+1; i++) {
             int l_idx = w-i, r_idx = w+i;
+            // if (belief_map[current_pix_idx] == 1) filter_thres = depth_filter_unvalid_thres[0];
+            // else filter_thres = depth_filter_unvalid_thres[0] * 3;
             if(depth_map[line_start_addr_offset+l_idx] != 0 & depth_map[line_start_addr_offset+r_idx] != 0 & l_idx > 0 & r_idx < width & \
                 abs(depth_map[line_start_addr_offset+l_idx] - curr_pix_value) < filter_thres & abs(depth_map[line_start_addr_offset+r_idx] - curr_pix_value) < filter_thres) {
                 left_weight += filter_weights[i];
@@ -334,6 +339,8 @@ __global__ void depth_filter(float *depth_map, int *height_array, int *width_arr
         stop_flag = false;
         for (int i=1; i< filter_max_length+1; i++) {
             int l_idx = h-i, r_idx = h+i;
+            //if (belief_map[current_pix_idx] == 1) filter_thres = depth_filter_unvalid_thres[0];
+            //else filter_thres = depth_filter_unvalid_thres[0] * 3;
             if(depth_map[l_idx*width+w] != 0 & depth_map[r_idx*width+w] != 0 & l_idx > 0 & r_idx < height & \
                 abs(depth_map[l_idx*width+w] - curr_pix_value) < filter_thres & abs(depth_map[r_idx*width+w] - curr_pix_value) < filter_thres) {
                 left_weight += filter_weights[i];
