@@ -58,7 +58,9 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
     if((phase_sub_index == 0) & (phase > pi*1.5))  phase -= 2.0*pi; 
     if((phase_sub_index == 1) & (phase < pi*0.5))  phase += 2.0*pi; 
     img_phase[idx] = phase_main_index * phsift_pattern_period_per_pixel + (phase * phsift_pattern_period_per_pixel / (2*pi));
-    img_index[idx] = ! need_outliers_checking_flag;  //reuse img_index as belief map
+    //reuse img_index as belief map
+    if (need_outliers_checking_flag) img_index[idx] = 0;
+    else img_index[idx] = abs(i4 - i2) + abs(i3 - i1);  //reuse img_index as belief map, last bit is need_outliers_checking_flag
 }
 
 __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, short *rectified_bfmap, float *sub_pixel_map_x)
@@ -96,6 +98,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     // if another pixel has similar index( < index_thres_for_outliers_checking) has a distance > max_allow_pixel_per_index, consider it's an outlier 
     float max_allow_pixel_per_index_for_outliers_checking = 2.5 + 1.0 * projector_area_ratio * width / 1280.0;
     float index_thres_for_outliers_checking = index_thres_for_matching * 1.2;
+    const bool use_belief_map_checking_when_matching = false;
 
     int h = blockIdx.x, stride = blockDim.x, offset = threadIdx.x;  //blockIdx.x is current working line; blockDim.x is stride
     int thread_work_length = width / blockDim.y;  //blockDim.y is the num of threads group per line
@@ -122,6 +125,10 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
             if (checking_right_edge >=width) checking_right_edge=width;
             for (int i=checking_left_edge; i < checking_right_edge; i++) {  // fast checking around last_right_corres_point
                 if (isnan(line_r[i])) continue;
+                if (use_belief_map_checking_when_matching) {
+                    float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
+                    if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) continue;
+                }
                 float thres = index_thres_for_matching + abs(img_index_left_sub_px[line_start_addr_offset+w] - w - img_index_right_sub_px[line_start_addr_offset+i] + i)/projector_area_ratio;
                 if ((line_l[w]-thres <= line_r[i]) & (line_r[i] <= line_l[w])) {
                     if (most_corres_pts_l==-1) most_corres_pts_l = i;
@@ -141,6 +148,10 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         if (most_corres_pts_l == -1 & most_corres_pts_r == -1) {
             for (int i=0; i < width; i++) { 
                 if (isnan(line_r[i])) continue;
+                if (use_belief_map_checking_when_matching) {
+                    float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
+                    if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) continue;
+                }
                 // if (!belief_map_r[line_start_addr_offset+i]) continue;
                 if ((line_l[w]-index_thres_for_matching <= line_r[i]) & (line_r[i] <= line_l[w])) {
                     if (most_corres_pts_l==-1) most_corres_pts_l = i;
