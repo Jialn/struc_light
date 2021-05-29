@@ -15,14 +15,14 @@ import depth_map_utils as utils
 ### parameters 
 phase_decoding_unvalid_thres = 2  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
-                                  # e.g., 1, 2, 5 for low-expo real captured images; 5, 10, 20 for normal expo rendered images.
+                                  # e.g., 1, 2, 5 for low-expo real captured images; 2, 5, 20 for normal or high expo rendered images.
                                   # lower value bring many wrong paried left and right indexs
                                   # if phase_decoding_unvalid_thres <= 1, enhanced_belief_map_checking_when_matching is forced enabled
-enhanced_belief_map_checking_when_matching = False # use enhanced_belief_map_checking;
-                                                   # gives more robust matching result, but slow;
+enhanced_belief_map_checking_when_matching = True  # use enhanced_belief_map_checking;
+                                                    # gives more robust matching result, but slow;
 remove_possibly_outliers_when_matching = True
-depth_cutoff_near, depth_cutoff_far = 0.1, 2.0     # depth cutoff
-flying_points_filter_checking_range = 0.003        # about 5-7 times of resolution per pxiel
+depth_cutoff_near, depth_cutoff_far = 0.1, 2.0      # depth cutoff
+flying_points_filter_checking_range = 0.003         # about 5-10 times of resolution per projector pxiel
 flying_points_filter_minmum_points_in_checking_range = 5  # including the point itself, will also add a ratio of width // 400
 use_depth_filter = True                             # a filter that smothing the image while preserves local structure
 depth_filter_max_length = 3                         # from 0 - 6
@@ -48,7 +48,6 @@ if phase_decoding_unvalid_thres <= 1 or enhanced_belief_map_checking_when_matchi
     cuda_src_string = "#define use_belief_map_checking_when_matching\n" + cuda_src_string
 cuda_module = SourceModule(cuda_src_string)
 
-cuda_test = cuda_module.get_function("cuda_test")
 convert_bayer = cuda_module.get_function("convert_bayer_to_blue")
 gray_decode_cuda_kernel = cuda_module.get_function("gray_decode")
 phase_shift_decode_cuda_kernel = cuda_module.get_function("phase_shift_decode")
@@ -104,17 +103,6 @@ def depth_filter_cuda(depth_map, height, width, belief_map):
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unvalid_thres)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
-
-# ### for simple pycuda test
-# h, w = 2048, 2592
-# a = np.random.randn(h, w).astype(np.float32)
-# b = np.random.randn(h, w).astype(np.float32)
-# dest = np.empty_like(a)
-# start_time = time.time()
-# cuda_test(cuda.Out(dest), cuda.In(a), cuda.In(b), cuda.In( np.array(1.0).astype(np.float32) ), block=(32,1,1), grid=(w*h//32,1))
-# print("running time: %.4f s" % ((time.time() - start_time)/3))
-# # print(dest-a*b)
-# exit()
 
 def from_gpu(gpu_data, size_sample, dtype):
     nd_array = np.empty_like(size_sample, dtype)
