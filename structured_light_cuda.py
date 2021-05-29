@@ -13,10 +13,13 @@ from stereo_rectify import StereoRectify
 import depth_map_utils as utils
 
 ### parameters 
-phase_decoding_unvalid_thres = 1  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
+phase_decoding_unvalid_thres = 2  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
                                   # this value is a balance between valid pts rates and error points rates
                                   # e.g., 1, 2, 5 for low-expo real captured images; 5, 10, 20 for normal expo rendered images.
-use_morph_ex_for_valid_map = False                 # using morph for generating valid map of projector area
+                                  # lower value bring many wrong paried left and right indexs
+                                  # if phase_decoding_unvalid_thres <= 1, enhanced_belief_map_checking_when_matching is forced enabled
+enhanced_belief_map_checking_when_matching = False # use enhanced_belief_map_checking;
+                                                   # gives more robust matching result, but slow;
 remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0     # depth cutoff
 flying_points_filter_checking_range = 0.003        # about 5-7 times of resolution per pxiel
@@ -41,9 +44,12 @@ enable_depth_map_post_processing = True
 dir_path = os.path.dirname(os.path.realpath(__file__))  # dir of this file
 with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
     cuda_src_string = f.read()
+if phase_decoding_unvalid_thres <= 1 or enhanced_belief_map_checking_when_matching:
+    cuda_src_string = "#define use_belief_map_checking_when_matching\n" + cuda_src_string
 cuda_module = SourceModule(cuda_src_string)
 
 cuda_test = cuda_module.get_function("cuda_test")
+convert_bayer = cuda_module.get_function("convert_bayer_to_blue")
 gray_decode_cuda_kernel = cuda_module.get_function("gray_decode")
 phase_shift_decode_cuda_kernel = cuda_module.get_function("phase_shift_decode")
 flying_points_filter_cuda_kernel = cuda_module.get_function("flying_points_filter")
@@ -54,7 +60,7 @@ optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimi
 convert_dmap_to_mili_meter = cuda_module.get_function("convert_dmap_to_mili_meter")
 
 def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map, image_num, height,width, img_index, unvalid_thres):
-    gray_decode_cuda_kernel(src_imgs, cuda.In(avg_thres_posi), cuda.In(avg_thres_nega), cuda.In(prj_valid_map),
+    gray_decode_cuda_kernel(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map,
         cuda.In(np.int32(image_num)),cuda.In(np.int32(height)),cuda.In(np.int32(width)),
         img_index,cuda.In(np.int32(unvalid_thres)),
         block=(width//4, 1, 1), grid=(height*4, 1))
@@ -119,15 +125,12 @@ def from_gpu(gpu_data, size_sample, dtype):
 global_reading_img_time = 0
 img_phase = None # gpu array, will be faster as global variable(will not free mem every call)
 img_index = None
-prj_valid_map_left = None
-prj_valid_map_right = None
 gpu_remap_x_left = None
 gpu_remap_y_left = None
 gpu_remap_x_right = None
 gpu_remap_y_right = None
-def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, images=None):
-    global global_reading_img_time, img_phase, img_index, gpu_remap_x_left, gpu_remap_y_left, gpu_remap_x_right, gpu_remap_y_right, prj_valid_map_left, prj_valid_map_right, roughly_projector_area_ratio_in_image
-    unvalid_thres = 0
+def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_image, res_path=None, images=None):
+    global global_reading_img_time, img_phase, img_index, gpu_remap_x_left, gpu_remap_y_left, gpu_remap_x_right, gpu_remap_y_right, roughly_projector_area_ratio_in_image
     save_mid_res = save_mid_res_for_visulize
     image_seq_start_index = default_image_seq_start_index
     start_time = time.time()
@@ -154,6 +157,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
         prj_area_posi, prj_area_nega = images[image_seq_start_index], images[image_seq_start_index+1]
         images_graycode = images[image_seq_start_index+2:image_seq_start_index+10] # gray code posi images
         images_phsft = images[image_seq_start_index+10:image_seq_start_index+14] # phase shift images
+
     if rectifier.remap_x_left_scaled is None: # to build the internal LUT map
         _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)
         rectify_map_x_left, rectify_map_y_left, camera_kd_left = rectifier.remap_x_left_scaled, rectifier.remap_y_left_scaled, rectifier.rectified_camera_kd_l
@@ -166,65 +170,62 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
         cuda.memcpy_htod(gpu_remap_y_left,  rectify_map_y_left)
         cuda.memcpy_htod(gpu_remap_x_right, rectify_map_x_right)
         cuda.memcpy_htod(gpu_remap_y_right, rectify_map_y_right)
-    
-    def build_prj_valid_map(posi, nega, res_path, appendix):
-        valid_map_diff = posi.astype(np.int16) - nega.astype(np.int16)
-        if use_morph_ex_for_valid_map:
-            kernel = utils.rect_kernel(200,200) # cross_kernel(200)
-            valid_map_morph = cv2.morphologyEx(valid_map_diff, cv2.MORPH_CLOSE, kernel, iterations=1)
-            valid_map_morph = cv2.morphologyEx(valid_map_morph, cv2.MORPH_OPEN, kernel, iterations=1)
-            thres_bin = np.mean(valid_map_morph)
-            prj_valid_map_bin = cv2.threshold(valid_map_morph, thres_bin, 255, cv2.THRESH_BINARY)
-        else:
-            thres_bin = 2+phase_decoding_unvalid_thres
-            thres, prj_valid_map_bin = cv2.threshold(valid_map_diff, thres_bin, 255, cv2.THRESH_BINARY)
-        if save_mid_res_for_visulize:
-            if use_morph_ex_for_valid_map:
-                cv2.imwrite(res_path + "/prj_valid_map" + appendix[:2] + "_diff.png", valid_map_diff.astype(np.uint8))
-                cv2.imwrite(res_path + "/prj_valid_map" + appendix[:2] + "_moex.png", valid_map_morph.astype(np.uint8))
-            cv2.imwrite(res_path + "/prj_valid_map" + appendix[:2] + "_bin.png", prj_valid_map_bin.astype(np.uint8))
-        return prj_valid_map_bin.astype(np.uint8)
-
-    if appendix == '_l.bmp':
-        if prj_valid_map_left is None:
-            prj_valid_map_left = build_prj_valid_map(prj_area_posi, prj_area_nega, res_path, appendix)
-        prj_valid_map = prj_valid_map_left.astype(np.uint8)
-        if roughly_projector_area_ratio_in_image is None:
-            total_pix, projector_area_pix = prj_valid_map.nbytes, len(np.where(prj_valid_map == 255)[0])
-            roughly_projector_area_ratio_in_image = np.sqrt(projector_area_pix/total_pix)
-            print("estimated valid_area_ratio: "+str(roughly_projector_area_ratio_in_image))
-    else:
-        if prj_valid_map_right is None:
-            prj_valid_map_right = build_prj_valid_map(prj_area_posi, prj_area_nega, res_path, appendix)
-            thres, prj_valid_map_right = cv2.threshold(prj_valid_map_right, 20+phase_decoding_unvalid_thres, 255, cv2.THRESH_BINARY)
-        prj_valid_map = prj_valid_map_right.astype(np.uint8)
-
+    if roughly_projector_area_ratio_in_image is None:
+        valid_map_diff = prj_area_posi.astype(np.int16) - prj_area_nega.astype(np.int16)
+        _, prj_valid_map_for_prjratio = cv2.threshold(valid_map_diff.astype(np.uint8), 1, 255, cv2.THRESH_BINARY)
+        total_pix, projector_area_pix = prj_valid_map_for_prjratio.nbytes, len(np.where(prj_valid_map_for_prjratio == 255)[0])
+        roughly_projector_area_ratio_in_image = np.sqrt(projector_area_pix/total_pix)
+        print("estimated valid_area_ratio: "+str(roughly_projector_area_ratio_in_image))
     if img_phase is None:
-        img_phase = cuda.mem_alloc(prj_valid_map.nbytes*4)  # float32
-        img_index = cuda.mem_alloc(prj_valid_map.nbytes*2)  # int16
+        img_phase = cuda.mem_alloc(prj_area_posi.nbytes*4)  # float32
+        img_index = cuda.mem_alloc(prj_area_posi.nbytes*2)  # int16
     # print("read images and rectfy map: %.3f s" % (time.time() - start_time))
     global_reading_img_time += (time.time() - start_time)
+    
     ### prepare gpu data
     start_time = time.time()
     image_num_gray, image_num_phsft = len(images_graycode), len(images_phsft)
-    images_gray_src =       cuda.mem_alloc(prj_valid_map.nbytes*image_num_gray) # np.array(images_graycode)
-    images_phsft_src =      cuda.mem_alloc(prj_valid_map.nbytes*image_num_phsft) # np.array(images_phsft)
-    rectified_img_phase =   cuda.mem_alloc(prj_valid_map.nbytes*4) # np.empty_like(prj_valid_map, dtype=np.float32)
-    rectified_belief_map =  cuda.mem_alloc(prj_valid_map.nbytes*2) # np.empty_like(prj_valid_map, dtype=np.int16)
-    sub_pixel_map =         cuda.mem_alloc(prj_valid_map.nbytes*4) # np.empty_like(prj_valid_map, dtype=np.float32)
-    for i in range(image_num_gray):
-        cuda.memcpy_htod(int(images_gray_src)+i*prj_valid_map.nbytes, images_graycode[i])
-    for i in range(image_num_phsft):
-        cuda.memcpy_htod(int(images_phsft_src)+i*prj_valid_map.nbytes, images_phsft[i])
-
+    prj_area_posi_gpu =     cuda.mem_alloc(prj_area_posi.nbytes)
+    prj_area_nega_gpu =     cuda.mem_alloc(prj_area_posi.nbytes)
+    prj_valid_map =         cuda.mem_alloc(prj_area_posi.nbytes)
+    images_gray_src =       cuda.mem_alloc(prj_area_posi.nbytes*image_num_gray) # np.array(images_graycode)
+    images_phsft_src =      cuda.mem_alloc(prj_area_posi.nbytes*image_num_phsft) # np.array(images_phsft)
+    rectified_img_phase =   cuda.mem_alloc(prj_area_posi.nbytes*4) # np.empty_like(prj_area_posi, dtype=np.float32)
+    rectified_belief_map =  cuda.mem_alloc(prj_area_posi.nbytes*2) # np.empty_like(prj_area_posi, dtype=np.int16)
+    sub_pixel_map =         cuda.mem_alloc(prj_area_posi.nbytes*4) # np.empty_like(prj_area_posi, dtype=np.float32)
     height, width = images_graycode[0].shape[:2]
+    cuda.memcpy_htod(prj_area_posi_gpu, prj_area_posi)
+    cuda.memcpy_htod(prj_area_nega_gpu, prj_area_nega)
+    for i in range(image_num_gray):
+        cuda.memcpy_htod(int(images_gray_src)+i*prj_area_posi.nbytes, images_graycode[i])
+    for i in range(image_num_phsft):
+        cuda.memcpy_htod(int(images_phsft_src)+i*prj_area_posi.nbytes, images_phsft[i])
     print("alloc gpu mem and copy src images into gpu: %.3f s" % (time.time() - start_time))
+    if is_bayer_color_image:
+        start_time = time.time()
+        convert_bayer(prj_area_posi_gpu, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
+                block=(width//4, 1, 1), grid=(height, 1))
+        # demosac_img_cuda = from_gpu(prj_area_posi_gpu, size_sample=prj_area_posi, dtype=np.uint8)
+        # demosac_img_cuda_opencv = cv2.cvtColor(prj_area_posi, cv2.COLOR_BAYER_BG2BGR)[:,:,0]
+        # cv2.imwrite(res_path + "/demosac_img_cuda" + appendix, demosac_img_cuda)
+        # cv2.imwrite(res_path + "/demosac_img_cuda_opencv" + appendix, demosac_img_cuda_opencv)
+        # cv2.imwrite(res_path + "/diff_tmp" + appendix, 128*abs(demosac_img_cuda_opencv-demosac_img_cuda))
+        convert_bayer(prj_area_nega_gpu, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
+                block=(width//4, 1, 1), grid=(height, 1))
+        for i in range(image_num_gray):
+            convert_bayer(images_gray_src, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
+                block=(width//4, 1, 1), grid=(height, 1))
+        for i in range(image_num_phsft):
+            convert_bayer(images_phsft_src, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
+                block=(width//4, 1, 1), grid=(height, 1))
+        print("demosac using gpu: %.3f s" % (time.time() - start_time))
+
     ### decoding
     start_time = time.time()
-    gray_decode_cuda(images_gray_src, prj_area_posi, prj_area_nega, prj_valid_map, len(images_graycode), height,width, img_index, unvalid_thres)
+    gray_decode_cuda(images_gray_src, prj_area_posi_gpu, prj_area_nega_gpu, prj_valid_map, len(images_graycode), height,width, img_index, phase_decoding_unvalid_thres+1)
     print("gray code decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res and res_path is not None:
-        mid_res_corse_gray_index_raw = from_gpu(img_index, size_sample=prj_valid_map, dtype=np.int16) // 2
+        mid_res_corse_gray_index_raw = from_gpu(img_index, size_sample=prj_area_posi, dtype=np.int16) // 2
         mid_res_corse_gray_index = np.clip(mid_res_corse_gray_index_raw * 80 % 255, 0, 255).astype(np.uint8)
         cv2.imwrite(res_path + "/mid_res_corse_gray_index" + appendix, mid_res_corse_gray_index)
   
@@ -234,8 +235,10 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
     print("phase decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res:
         # check for the unrectified phase
-        images_phsft_v = (from_gpu(img_phase, size_sample=prj_valid_map, dtype=np.float32)*4.0).astype(np.uint8)
+        images_phsft_v = (from_gpu(img_phase, size_sample=prj_area_posi, dtype=np.float32)*4.0).astype(np.uint8)
         cv2.imwrite(res_path + "/ph_correspondence_l" + appendix[:2] + "_unrectified.png", images_phsft_v)
+        prj_valid_map_bin = from_gpu(prj_valid_map, size_sample=prj_area_posi, dtype=np.uint8)
+        cv2.imwrite(res_path + "/prj_valid_map_gpu" + appendix[:2] + "_bin.png", prj_valid_map_bin)
     
     ### rectify the decoding res, accroding to left or right
     start_time = time.time()
@@ -245,14 +248,14 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
     print("rectify: %.3f s" % (time.time() - start_time))
 
     if save_mid_res:
-        mid_res_wrapped_phase = (from_gpu(img_phase, size_sample=prj_valid_map, dtype=np.float32) - mid_res_corse_gray_index_raw * phsift_pattern_period_per_pixel) / phsift_pattern_period_per_pixel
+        mid_res_wrapped_phase = (from_gpu(img_phase, size_sample=prj_area_posi, dtype=np.float32) - mid_res_corse_gray_index_raw * phsift_pattern_period_per_pixel) / phsift_pattern_period_per_pixel
         mid_res_wrapped_phase = (mid_res_wrapped_phase * 254.0)
         cv2.imwrite(res_path + "/mid_res_wrapped_phase"+appendix, mid_res_wrapped_phase.astype(np.uint8))
 
     return prj_area_posi, rectified_belief_map, rectified_img_phase, camera_kd, sub_pixel_map
 
 
-def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
+def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bayer_color_image=False):
     # return depth map in mili-meter
     global global_reading_img_time
     if rectifier is None: rectifier = StereoRectify(scale=1.0, cali_file=pattern_path+'calib.yml')
@@ -260,8 +263,8 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None):
     else: images_left, images_right = None, None
     ### Rectify and Decode 
     pipe_start_time = start_time = time.time()
-    gray_left, belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = index_decoding_from_images(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left)
-    _, belief_map_right, img_index_right, camera_kd_r, img_index_right_sub_px = index_decoding_from_images(pattern_path, '_r.bmp', rectifier=rectifier, res_path=res_path, images=images_right)
+    gray_left, belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = index_decoding_from_images(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left, is_bayer_color_image=is_bayer_color_image)
+    _, belief_map_right, img_index_right, camera_kd_r, img_index_right_sub_px = index_decoding_from_images(pattern_path, '_r.bmp', rectifier=rectifier, res_path=res_path, images=images_right, is_bayer_color_image=is_bayer_color_image)
     print("- left and right decoding in total: %.3f s" % (time.time() - start_time - global_reading_img_time))
     ### Get camera parameters
     fx = camera_kd_l[0][0]
