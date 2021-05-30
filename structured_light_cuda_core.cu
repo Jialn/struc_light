@@ -148,15 +148,13 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
             for (int i=checking_left_edge; i < checking_right_edge; i++) {  // fast checking around last_right_corres_point
                 if (isnan(line_r[i])) continue;
                 float thres = index_thres_for_matching + abs(img_index_left_sub_px[line_start_addr_offset+w] - w - img_index_right_sub_px[line_start_addr_offset+i] + i)/projector_area_ratio;
-                #ifdef use_belief_map_checking_when_matching
-                int belief_flag = 1;
-                float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
-                if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
-                #endif
                 if ((line_l[w]-thres <= line_r[i]) & (line_r[i] <= line_l[w])) {
                     if (most_corres_pts_l==-1) most_corres_pts_l = i;
                     else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
                     #ifdef use_belief_map_checking_when_matching
+                    int belief_flag = 1;
+                    float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
+                    if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
                     if(belief_flag) {
                         if (most_corres_pts_l_bf==-1) most_corres_pts_l_bf = i;
                         else if (line_r[i] >= line_r[most_corres_pts_l_bf]) most_corres_pts_l_bf = i;
@@ -169,6 +167,9 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
                     if (most_corres_pts_r==-1) most_corres_pts_r = i;
                     else if (line_r[i] <= line_r[most_corres_pts_r]) most_corres_pts_r = i;
                     #ifdef use_belief_map_checking_when_matching
+                    int belief_flag = 1;
+                    float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
+                    if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
                     if(belief_flag) {
                         if (most_corres_pts_r_bf==-1) most_corres_pts_r_bf = i;
                         else if (line_r[i] <= line_r[most_corres_pts_r_bf]) most_corres_pts_r_bf = i;
@@ -184,15 +185,13 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
             for (int i=0; i < width; i++) { 
                 if (isnan(line_r[i])) continue;
                 float thres = index_thres_for_matching;
-                #ifdef use_belief_map_checking_when_matching
-                int belief_flag = 1;
-                float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
-                if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
-                #endif
                 if ((line_l[w]-thres <= line_r[i]) & (line_r[i] <= line_l[w])) {
                     if (most_corres_pts_l==-1) most_corres_pts_l = i;
                     else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
                     #ifdef use_belief_map_checking_when_matching
+                    int belief_flag = 1;
+                    float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
+                    if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
                     if(belief_flag) {
                         if (most_corres_pts_l_bf==-1) most_corres_pts_l_bf = i;
                         else if (line_r[i] >= line_r[most_corres_pts_l_bf]) most_corres_pts_l_bf = i;
@@ -205,6 +204,9 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
                     if (most_corres_pts_r==-1) most_corres_pts_r = i;
                     else if (line_r[i] <= line_r[most_corres_pts_r]) most_corres_pts_r = i;
                     #ifdef use_belief_map_checking_when_matching
+                    int belief_flag = 1;
+                    float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
+                    if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
                     if(belief_flag) {
                         if (most_corres_pts_r_bf==-1) most_corres_pts_r_bf = i;
                         else if (line_r[i] <= line_r[most_corres_pts_r_bf]) most_corres_pts_r_bf = i;
@@ -252,7 +254,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         float w_l = img_index_left_sub_px[curr_pix_idx];
         // check possiblely left outliers
         #ifdef use_belief_map_checking_when_matching
-        bool checkleft = checkright;
+        bool checkleft = checkright | (belief_map_l[curr_pix_idx]==0);
         #else
         bool checkleft = (belief_map_l[curr_pix_idx]==0);
         #endif
