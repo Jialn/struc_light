@@ -2,7 +2,6 @@
 
 HomePC win - enable post-process; -enable enhanced_belief_map_checking_when_matching -flyingpoints thres 0.003
 - Total time without reading imgs and pre-built rectify maps: 0.139 s
-depth post processing: 0.110 s
 valid points rate below 10mm: 2928745/3170085, 92.38695492392159%
 average_error(mm):0.109614685
 valid points rate below 1mm: 2918584/3170085, 92.06642724090995%
@@ -12,7 +11,6 @@ average_error(mm):0.09207169
 
 HomePC win - enable post-process; -disable enhanced_belief_map_checking_when_matching; -flyingpoints thres 0.003
 - Total time without reading imgs and pre-built rectify maps: 0.083 s
-depth post processing: 0.112 s
 valid points rate below 10mm: 2934382/3170085, 92.5647734997642%
 average_error(mm):0.11006126
 valid points rate below 1mm: 2923659/3170085, 92.22651758549061%
@@ -25,6 +23,7 @@ precision and valid points rate loss due to phase_decoding_unvalid_thres 5->2; u
 ---------------------------------------------------------------
 HomePC win
 - enable post-process
+depth post processing: 0.110 s
 valid points rate below 10mm: 2916181/3121565, 93.4204797913867%
 average_error(mm):0.109722905
 valid points rate below 1mm: 2905046/3121565, 93.06376769344864%

@@ -18,7 +18,7 @@ phase_decoding_unvalid_thres = 2  # if the diff of pixel in an inversed pattern(
                                   # e.g., 1, 2, 5 for low-expo real captured images; 2, 5, 20 for normal or high expo rendered images.
                                   # lower value bring many wrong paried left and right indexs
                                   # if phase_decoding_unvalid_thres <= 1, enhanced_belief_map_checking_when_matching is forced enabled
-enhanced_belief_map_checking_when_matching = True  # use enhanced_belief_map_checking;
+enhanced_belief_map_checking_when_matching = True   # use enhanced_belief_map_checking;
                                                     # gives more robust matching result, but slow;
 remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0      # depth cutoff

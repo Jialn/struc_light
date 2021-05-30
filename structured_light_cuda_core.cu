@@ -68,7 +68,7 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
     bool need_outliers_checking_flag = (abs(i4 - i2) <= outliers_checking_diff_thres & abs(i3 - i1) <= outliers_checking_diff_thres);
     if (unvalid_flag) {
         img_phase[idx] = nanf("");
-        img_index[idx] = 0;  //reuse img_index as belief map
+        img_index[idx] = 0;
         return;
     }
     float phase = - atan2f(i4-i2, i3-i1) + PI;
@@ -79,7 +79,7 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
     img_phase[idx] = phase_main_index * phsift_pattern_period_per_pixel + (phase * phsift_pattern_period_per_pixel / (2*PI));
     //reuse img_index as belief map
     if (need_outliers_checking_flag) img_index[idx] = 0;
-    else img_index[idx] = abs(i4 - i2) + abs(i3 - i1);  //reuse img_index as belief map, last bit is need_outliers_checking_flag
+    else img_index[idx] = abs(i4 - i2) + abs(i3 - i1);
 }
 
 __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, short *rectified_bfmap, float *sub_pixel_map_x)
@@ -106,7 +106,42 @@ __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, flo
     sub_pixel_map_x[idx] = w + (round_x - src_x);
 }
 
-// #define use_belief_map_checking_when_matching
+
+// #define use_belief_map_checking_when_matching  //gives more robust matching result, but slower
+__device__ __forceinline__ void pix_index_matching(float *line_l, float *line_r, int w, int curr_pix_idx, int i, int line_start_addr_offset, float thres, short *belief_map_l, short *belief_map_r, int *most_corres_pts_l, int *most_corres_pts_r, int *most_corres_pts_l_bf, int *most_corres_pts_r_bf, int *cnt_l, int *cnt_r, float *average_corres_position_in_thres_l, float *average_corres_position_in_thres_r)
+{
+    if ((line_l[w]-thres <= line_r[i]) & (line_r[i] <= line_l[w])) {
+        if (*most_corres_pts_l==-1) *most_corres_pts_l = i;
+        else if (line_r[i] >= line_r[*most_corres_pts_l]) *most_corres_pts_l = i;
+        #ifdef use_belief_map_checking_when_matching
+        int belief_flag = 1;
+        float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
+        if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
+        if(belief_flag) {
+            if (*most_corres_pts_l_bf==-1) *most_corres_pts_l_bf = i;
+            else if (line_r[i] >= line_r[*most_corres_pts_l_bf]) *most_corres_pts_l_bf = i;
+        }
+        #endif
+        *cnt_l += 1; 
+        *average_corres_position_in_thres_l += i;
+    }
+    else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+thres)) {
+        if (*most_corres_pts_r==-1) *most_corres_pts_r = i;
+        else if (line_r[i] <= line_r[*most_corres_pts_r]) *most_corres_pts_r = i;
+        #ifdef use_belief_map_checking_when_matching
+        int belief_flag = 1;
+        float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
+        if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
+        if(belief_flag) {
+            if (*most_corres_pts_r_bf==-1) *most_corres_pts_r_bf = i;
+            else if (line_r[i] <= line_r[*most_corres_pts_r_bf]) *most_corres_pts_r_bf = i;
+        }
+        #endif
+        *cnt_r += 1;
+        *average_corres_position_in_thres_r += i;
+    }
+}
+
 __global__ void gen_depth_from_index_matching(float *depth_map, int *height_array, int *width_array, float *img_index_left, float *img_index_right, float *baseline,float *dmap_base,float *fx, float *img_index_left_sub_px,float *img_index_right_sub_px, short *belief_map_l, short *belief_map_r, float *roughly_projector_area_in_image, float *depth_cutoff, int *remove_possibly_outliers_when_matching)
 {
     float depth_cutoff_near = depth_cutoff[0], depth_cutoff_far = depth_cutoff[1];
@@ -133,10 +168,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
             continue;
         }
         // find the nearest left and right corresponding points in right image
-        int most_corres_pts_l = -1, most_corres_pts_r = -1;
-        #ifdef use_belief_map_checking_when_matching
-        int most_corres_pts_l_bf = -1, most_corres_pts_r_bf = -1;
-        #endif
+        int most_corres_pts_l = -1, most_corres_pts_r = -1, most_corres_pts_l_bf = -1, most_corres_pts_r_bf = -1;
         int checking_left_edge = 0, checking_right_edge = width;
         int cnt_l = 0, cnt_r = 0;
         float average_corres_position_in_thres_l = 0, average_corres_position_in_thres_r = 0;
@@ -148,36 +180,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
             for (int i=checking_left_edge; i < checking_right_edge; i++) {  // fast checking around last_right_corres_point
                 if (isnan(line_r[i])) continue;
                 float thres = index_thres_for_matching + abs(img_index_left_sub_px[line_start_addr_offset+w] - w - img_index_right_sub_px[line_start_addr_offset+i] + i)/projector_area_ratio;
-                if ((line_l[w]-thres <= line_r[i]) & (line_r[i] <= line_l[w])) {
-                    if (most_corres_pts_l==-1) most_corres_pts_l = i;
-                    else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
-                    #ifdef use_belief_map_checking_when_matching
-                    int belief_flag = 1;
-                    float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
-                    if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
-                    if(belief_flag) {
-                        if (most_corres_pts_l_bf==-1) most_corres_pts_l_bf = i;
-                        else if (line_r[i] >= line_r[most_corres_pts_l_bf]) most_corres_pts_l_bf = i;
-                    }
-                    #endif
-                    cnt_l += 1;
-                    average_corres_position_in_thres_l += i;
-                }
-                else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+thres)) {
-                    if (most_corres_pts_r==-1) most_corres_pts_r = i;
-                    else if (line_r[i] <= line_r[most_corres_pts_r]) most_corres_pts_r = i;
-                    #ifdef use_belief_map_checking_when_matching
-                    int belief_flag = 1;
-                    float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
-                    if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
-                    if(belief_flag) {
-                        if (most_corres_pts_r_bf==-1) most_corres_pts_r_bf = i;
-                        else if (line_r[i] <= line_r[most_corres_pts_r_bf]) most_corres_pts_r_bf = i;
-                    }
-                    #endif
-                    cnt_r += 1;
-                    average_corres_position_in_thres_r += i;
-                }
+                pix_index_matching(line_l, line_r, w, curr_pix_idx, i, line_start_addr_offset, thres, belief_map_l, belief_map_r, &most_corres_pts_l, &most_corres_pts_r, &most_corres_pts_l_bf, &most_corres_pts_r_bf, &cnt_l, &cnt_r, &average_corres_position_in_thres_l, &average_corres_position_in_thres_r);
             }
         }
         // last_right_corres_point is invalid or not found most_corres_pts, expand the searching range and try searching again
@@ -185,36 +188,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
             for (int i=0; i < width; i++) { 
                 if (isnan(line_r[i])) continue;
                 float thres = index_thres_for_matching;
-                if ((line_l[w]-thres <= line_r[i]) & (line_r[i] <= line_l[w])) {
-                    if (most_corres_pts_l==-1) most_corres_pts_l = i;
-                    else if (line_r[i] >= line_r[most_corres_pts_l]) most_corres_pts_l = i;
-                    #ifdef use_belief_map_checking_when_matching
-                    int belief_flag = 1;
-                    float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
-                    if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
-                    if(belief_flag) {
-                        if (most_corres_pts_l_bf==-1) most_corres_pts_l_bf = i;
-                        else if (line_r[i] >= line_r[most_corres_pts_l_bf]) most_corres_pts_l_bf = i;
-                    }
-                    #endif
-                    cnt_l += 1;
-                    average_corres_position_in_thres_l += i;
-                }
-                else if ((line_l[w] <= line_r[i]) & (line_r[i] <= line_l[w]+thres)) {
-                    if (most_corres_pts_r==-1) most_corres_pts_r = i;
-                    else if (line_r[i] <= line_r[most_corres_pts_r]) most_corres_pts_r = i;
-                    #ifdef use_belief_map_checking_when_matching
-                    int belief_flag = 1;
-                    float bfmap_thres = 10 + (belief_map_l[curr_pix_idx] + belief_map_r[line_start_addr_offset+i]) * 0.75;
-                    if (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+i]) >= bfmap_thres) belief_flag=0;
-                    if(belief_flag) {
-                        if (most_corres_pts_r_bf==-1) most_corres_pts_r_bf = i;
-                        else if (line_r[i] <= line_r[most_corres_pts_r_bf]) most_corres_pts_r_bf = i;
-                    }
-                    #endif
-                    cnt_r += 1;
-                    average_corres_position_in_thres_r += i;
-                }
+                pix_index_matching(line_l, line_r, w, curr_pix_idx, i, line_start_addr_offset, thres, belief_map_l, belief_map_r, &most_corres_pts_l, &most_corres_pts_r, &most_corres_pts_l_bf, &most_corres_pts_r_bf, &cnt_l, &cnt_r, &average_corres_position_in_thres_l, &average_corres_position_in_thres_r);
             }
         }
         // get the right index
@@ -277,8 +251,8 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
 
 __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optimized_depth_map, int *height_array, int *width_array, float *img_index_left_sub_px)
 {
-    // interpo for depth map using sub_pixel
-    // this does not improve a lot on rendered data because no distortion and less stereo rectify for left camera, but useful for real captures
+    // interpo for depth map using sub-pixel map
+    // this does not improve a lot on rendered data because no distortion and less stereo rectify for left camera, but very useful for real captures
     int width = width_array[0];
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
     int w = current_pix_idx % width;
@@ -320,11 +294,9 @@ __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optim
 
 // flying points filter
 // a point could be considered as not flying when: points in checking range below max_distance > minmum num
-
-
 __global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int *height_array, int *width_array, float *camera_kp, float *depth_filter_max_distance, int *depth_filter_minmum_points_in_checking_range, int *belief_map)
 {
-    #define use_fast_distance_checking_for_flying_points_filter    // use 3D distance (slower but more precisely) or only distance of axis-z to check flying points
+    #define use_fast_distance_checking_for_flying_points_filter // use 3D distance (slower but more precisely) or only distance of axis-z to check flying points
             // enable this will save above 95% time compared with 3D distance checking, while can still remove most of the flying pts.
             // an example (3d vs only_z): render0000_2k avg error @ 10 mm thres: 0.1145mm vs 0.1152mm; cost time: 17ms vs 1ms on TitanRTX
     int height = height_array[0];
@@ -378,7 +350,6 @@ __global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int
 
 __global__ void depth_filter(float *depth_map, int *height_array, int *width_array, int *depth_filter_max_length, float *depth_filter_unvalid_thres, int *belief_map)
 {
-    // a point could be considered as not flying when: points in checking range below max_distance > minmum num 
     int height = height_array[0];
     int width = width_array[0];
     int filter_max_length = depth_filter_max_length[0];
