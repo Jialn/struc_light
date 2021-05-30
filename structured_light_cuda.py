@@ -13,11 +13,10 @@ from stereo_rectify import StereoRectify
 import depth_map_utils as utils
 
 ### parameters 
-phase_decoding_unvalid_thres = 2    # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
+phase_decoding_unvalid_thres = 2    # if the diff of pixel in an inversed pattern(has pi phase shift) is lower than this, consider it's unvalid;
                                     # this value is a balance between valid pts rates and error points rates
                                     # e.g., 1, 2, 5 for low-expo real captured images; 2, 5, 20 for normal or high expo rendered images.
-                                    # lower value bring many wrong paried left and right indexs
-                                    # if phase_decoding_unvalid_thres <= 1, enhanced_belief_map_checking_when_matching is forced enabled
+                                    # lower value may bring many wrongly paried left and right indexs
 use_belief_map_for_checking = True  # use enhanced matching with belief_map, gives more robust matching result, but slow;
 remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
@@ -43,8 +42,7 @@ enable_depth_map_post_processing = True
 dir_path = os.path.dirname(os.path.realpath(__file__))  # dir of this file
 with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
     cuda_src_string = f.read()
-if phase_decoding_unvalid_thres <= 1 or use_belief_map_for_checking:
-    cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
+if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
 cuda_module = SourceModule(cuda_src_string)
 
 convert_bayer = cuda_module.get_function("convert_bayer_to_blue")
