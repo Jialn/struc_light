@@ -13,19 +13,18 @@ from stereo_rectify import StereoRectify
 import depth_map_utils as utils
 
 ### parameters 
-phase_decoding_unvalid_thres = 2  # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
-                                  # this value is a balance between valid pts rates and error points rates
-                                  # e.g., 1, 2, 5 for low-expo real captured images; 2, 5, 20 for normal or high expo rendered images.
-                                  # lower value bring many wrong paried left and right indexs
-                                  # if phase_decoding_unvalid_thres <= 1, enhanced_belief_map_checking_when_matching is forced enabled
-enhanced_belief_map_checking_when_matching = True   # use enhanced_belief_map_checking;
-                                                    # gives more robust matching result, but slow;
+phase_decoding_unvalid_thres = 2    # if the diff of pixel in an inversed pattern(has pi phase shift) is smaller than this, consider it's unvalid;
+                                    # this value is a balance between valid pts rates and error points rates
+                                    # e.g., 1, 2, 5 for low-expo real captured images; 2, 5, 20 for normal or high expo rendered images.
+                                    # lower value bring many wrong paried left and right indexs
+                                    # if phase_decoding_unvalid_thres <= 1, enhanced_belief_map_checking_when_matching is forced enabled
+use_belief_map_for_checking = True  # use enhanced matching with belief_map, gives more robust matching result, but slow;
 remove_possibly_outliers_when_matching = True
-depth_cutoff_near, depth_cutoff_far = 0.1, 2.0      # depth cutoff
-flying_points_filter_checking_range = 0.003         # about 5-10 times of resolution per projector pxiel
+depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
+flying_points_filter_checking_range = 0.003     # about 5-10 times of resolution per projector pxiel
 flying_points_filter_minmum_points_in_checking_range = 5  # including the point itself, will also add a ratio of width // 400
-use_depth_filter = True                             # a filter that smothing the image while preserves local structure
-depth_filter_max_length = 3                         # from 0 - 6
+use_depth_filter = True                         # a filter that smothing the image while preserves local structure
+depth_filter_max_length = 3                     # from 0 - 6
 depth_filter_unvalid_thres = 0.001
 
 roughly_projector_area_ratio_in_image = None    # the roughly prjector area in image / image width, e.g., 0.5, 0.75, 1.0, 1.25
@@ -44,8 +43,8 @@ enable_depth_map_post_processing = True
 dir_path = os.path.dirname(os.path.realpath(__file__))  # dir of this file
 with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
     cuda_src_string = f.read()
-if phase_decoding_unvalid_thres <= 1 or enhanced_belief_map_checking_when_matching:
-    cuda_src_string = "#define use_belief_map_checking_when_matching\n" + cuda_src_string
+if phase_decoding_unvalid_thres <= 1 or use_belief_map_for_checking:
+    cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
 cuda_module = SourceModule(cuda_src_string)
 
 convert_bayer = cuda_module.get_function("convert_bayer_to_blue")
@@ -341,7 +340,7 @@ if __name__ == "__main__":
         gray_img = cv2.imread(image_path + str(default_image_seq_start_index) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
         gray_img_dark = cv2.imread(image_path + str(default_image_seq_start_index+1) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
         projector_area_diff = gray_img - gray_img_dark
-        projector_area = np.where(projector_area_diff > phase_decoding_unvalid_thres)
+        projector_area = np.where(projector_area_diff > 5)
         valid_points = np.where(depth_img>=1.0)
         error_img = (depth_img - depth_gt)[valid_points]
 
