@@ -190,19 +190,12 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
         start_time = time.time()
         convert_bayer(prj_area_posi_gpu, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
                 block=(width//4, 1, 1), grid=(height, 1))
-        # demosac_img_cuda = from_gpu(prj_area_posi_gpu, size_sample=prj_area_posi, dtype=np.uint8)
-        # demosac_img_opencv = cv2.cvtColor(prj_area_posi, cv2.COLOR_BAYER_BG2BGR)[:,:,0]
-        # cv2.imwrite(res_path + "/demosac_img_cuda" + appendix, demosac_img_cuda)
-        # cv2.imwrite(res_path + "/demosac_img_opencv" + appendix, demosac_img_opencv)
-        # cv2.imwrite(res_path + "/diff_tmp" + appendix, 128*abs(demosac_img_opencv-demosac_img_cuda))
         convert_bayer(prj_area_nega_gpu, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
-                block=(width//4, 1, 1), grid=(height, 1))
-        for i in range(image_num_gray):
-            convert_bayer(images_gray_src, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
-                block=(width//4, 1, 1), grid=(height, 1))
-        for i in range(image_num_phsft):
-            convert_bayer(images_phsft_src, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
-                block=(width//4, 1, 1), grid=(height, 1))
+            block=(width//4, 1, 1), grid=(height, 1))
+        convert_bayer(images_gray_src, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
+            block=(width//4, 1, 1), grid=(height*image_num_gray, 1))
+        convert_bayer(images_phsft_src, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
+            block=(width//4, 1, 1), grid=(height*image_num_phsft, 1))
         print("demosac using gpu: %.3f s" % (time.time() - start_time))
 
     ### decoding
