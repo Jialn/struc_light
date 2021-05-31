@@ -16,8 +16,8 @@ import depth_map_utils as utils
 phase_decoding_unvalid_thres = 2    # if the diff of pixel in an inversed pattern(has pi phase shift) is lower than this, consider it's unvalid;
                                     # this value is a balance between valid pts rates and error points rates
                                     # e.g., 1, 2, 5 for low-expo real captured images; 2, 5, 20 for normal or high expo rendered images.
-                                    # lower value may bring many wrongly paried left and right indexs
-use_belief_map_for_checking = True  # use enhanced matching with belief_map, gives more robust matching result, but slow;
+                                    # lower value may bring many wrongly paried left and right indexs, but looks good on drak objects
+use_belief_map_for_checking = True  # use enhanced matching with belief_map, gives more robust matching result, but a little bit slower;
 remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
 flying_points_filter_checking_range = 0.003     # about 5-10 times of resolution per projector pxiel
@@ -173,7 +173,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
     prj_area_posi_gpu =     cuda.mem_alloc(prj_area_posi.nbytes)
     prj_area_nega_gpu =     cuda.mem_alloc(prj_area_posi.nbytes)
     prj_valid_map =         cuda.mem_alloc(prj_area_posi.nbytes)
-    images_gray_src =       cuda.mem_alloc(prj_area_posi.nbytes*image_num_gray) # np.array(images_graycode)
+    images_gray_src =       cuda.mem_alloc(prj_area_posi.nbytes*image_num_gray)  # np.array(images_graycode)
     images_phsft_src =      cuda.mem_alloc(prj_area_posi.nbytes*image_num_phsft) # np.array(images_phsft)
     rectified_img_phase =   cuda.mem_alloc(prj_area_posi.nbytes*4) # np.empty_like(prj_area_posi, dtype=np.float32)
     rectified_belief_map =  cuda.mem_alloc(prj_area_posi.nbytes*2) # np.empty_like(prj_area_posi, dtype=np.int16)
@@ -191,10 +191,10 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
         convert_bayer(prj_area_posi_gpu, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
                 block=(width//4, 1, 1), grid=(height, 1))
         # demosac_img_cuda = from_gpu(prj_area_posi_gpu, size_sample=prj_area_posi, dtype=np.uint8)
-        # demosac_img_cuda_opencv = cv2.cvtColor(prj_area_posi, cv2.COLOR_BAYER_BG2BGR)[:,:,0]
+        # demosac_img_opencv = cv2.cvtColor(prj_area_posi, cv2.COLOR_BAYER_BG2BGR)[:,:,0]
         # cv2.imwrite(res_path + "/demosac_img_cuda" + appendix, demosac_img_cuda)
-        # cv2.imwrite(res_path + "/demosac_img_cuda_opencv" + appendix, demosac_img_cuda_opencv)
-        # cv2.imwrite(res_path + "/diff_tmp" + appendix, 128*abs(demosac_img_cuda_opencv-demosac_img_cuda))
+        # cv2.imwrite(res_path + "/demosac_img_opencv" + appendix, demosac_img_opencv)
+        # cv2.imwrite(res_path + "/diff_tmp" + appendix, 128*abs(demosac_img_opencv-demosac_img_cuda))
         convert_bayer(prj_area_nega_gpu, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
                 block=(width//4, 1, 1), grid=(height, 1))
         for i in range(image_num_gray):
@@ -208,7 +208,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
     ### decoding
     start_time = time.time()
     gray_decode_cuda(images_gray_src, prj_area_posi_gpu, prj_area_nega_gpu, prj_valid_map, len(images_graycode), height,width, img_index, phase_decoding_unvalid_thres+1)
-    print("gray code decoding: %.3f s" % (time.time() - start_time))
+    print("graycode decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res and res_path is not None:
         mid_res_corse_gray_index_raw = from_gpu(img_index, size_sample=prj_area_posi, dtype=np.int16) // 2
         mid_res_corse_gray_index = np.clip(mid_res_corse_gray_index_raw * 80 % 255, 0, 255).astype(np.uint8)

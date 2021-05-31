@@ -12,15 +12,15 @@ __global__ void convert_bayer_to_blue(unsigned char *src, int *height_array, int
     int idx_div4 = threadIdx.x + blockIdx.x*blockDim.x;
     int h_div2 = idx_div4 / width_half, w_div2 = idx_div4 % width_half;
     int idx = h_div2 * 2 * width + w_div2 * 2;
-    int pix;
-    if (idx > width+1) {    // skip the first line
-        pix = (int)src[idx-width-1] + (int)src[idx-width+1] + (int)src[idx+width-1] + (int)src[idx+width+1]+2;
-        src[idx] = pix/4;   //R
-        pix = (int)src[idx-width+1] + (int)src[idx+width+1]+1;
-        src[idx+1] = pix/2; //G
+    if (idx > width+1) {    // if not the first line
+        src[idx] = ((int)src[idx-width-1] + (int)src[idx-width+1] + (int)src[idx+width-1] + (int)src[idx+width+1]+2) / 4;  // R
+        src[idx+1] = ((int)src[idx-width+1] + (int)src[idx+width+1]+1) /2;  //G
     }
-    pix = (int)src[idx+width-1] + (int)src[idx+width+1]+1;
-    src[idx+width] = pix/2; //G
+    else {
+        src[idx] = ((int)src[idx+width-1] + (int)src[idx+width+1]+1) / 2;   //R
+        src[idx+1] = src[idx+width+1];                                      //G
+    }
+    src[idx+width] = ((int)src[idx+width-1] + (int)src[idx+width+1]+1) / 2; //G
     //src[idx+width+1] = src[idx+width+1]; //B
 }
 
@@ -166,26 +166,26 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         int checking_left_edge = 0, checking_right_edge = width;
         int cnt_l = 0, cnt_r = 0;
         float average_corres_position_in_thres_l = 0, average_corres_position_in_thres_r = 0;
-        if (last_right_corres_point > 0) {
+        if (last_right_corres_point > 0) {  // fast checking around last_right_corres_point
             checking_left_edge = last_right_corres_point - right_corres_point_offset_range;
             checking_right_edge = last_right_corres_point + right_corres_point_offset_range + stride;
             if (checking_left_edge <=0) checking_left_edge=0;
             if (checking_right_edge >=width) checking_right_edge=width;
-            for (int i=checking_left_edge; i < checking_right_edge; i++) {  // fast checking around last_right_corres_point
+            for (int i=checking_left_edge; i < checking_right_edge; i++) {
                 if (isnan(line_r[i])) continue;
                 float thres = index_thres_for_matching + abs(img_index_left_sub_px[line_start_addr_offset+w] - w - img_index_right_sub_px[line_start_addr_offset+i] + i)/projector_area_ratio;
                 pix_index_matching(line_l, line_r, w, curr_pix_idx, i, line_start_addr_offset, thres, belief_map_l, belief_map_r, &most_corres_pts_l, &most_corres_pts_r, &most_corres_pts_l_bf, &most_corres_pts_r_bf, &cnt_l, &cnt_r, &average_corres_position_in_thres_l, &average_corres_position_in_thres_r);
             }
         }
-        // last_right_corres_point is invalid or not found most_corres_pts, expand the searching range and try searching again
         if (most_corres_pts_l == -1 & most_corres_pts_r == -1) {
+            // last_right_corres_point is invalid or not found most_corres_pts, expand the searching range and try searching again
             for (int i=0; i < width; i++) { 
                 if (isnan(line_r[i])) continue;
                 float thres = index_thres_for_matching;
                 pix_index_matching(line_l, line_r, w, curr_pix_idx, i, line_start_addr_offset, thres, belief_map_l, belief_map_r, &most_corres_pts_l, &most_corres_pts_r, &most_corres_pts_l_bf, &most_corres_pts_r_bf, &cnt_l, &cnt_r, &average_corres_position_in_thres_l, &average_corres_position_in_thres_r);
             }
         }
-        // get the right index
+        // refine index of right 'w_r' by matching results
         float w_r = 0;
         bool outliers_flag = false;
         #ifdef use_belief_map_for_checking
