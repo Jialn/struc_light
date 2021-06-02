@@ -45,7 +45,8 @@ with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
 if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
 cuda_module = SourceModule(cuda_src_string)
 
-convert_bayer = cuda_module.get_function("convert_bayer_to_blue")
+convert_bayer = cuda_module.get_function("convert_bayer_to_gray")
+convert_bayer_blue = cuda_module.get_function("convert_bayer_to_blue")
 gray_decode_cuda_kernel = cuda_module.get_function("gray_decode")
 phase_shift_decode_cuda_kernel = cuda_module.get_function("phase_shift_decode")
 flying_points_filter_cuda_kernel = cuda_module.get_function("flying_points_filter")
@@ -115,7 +116,7 @@ gpu_remap_y_left = None
 gpu_remap_x_right = None
 gpu_remap_y_right = None
 def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_image, res_path=None, images=None):
-    global global_reading_img_time, img_phase, img_index, gpu_remap_x_left, gpu_remap_y_left, gpu_remap_x_right, gpu_remap_y_right, roughly_projector_area_ratio_in_image
+    global global_reading_img_time, convert_bayer, img_phase, img_index, gpu_remap_x_left, gpu_remap_y_left, gpu_remap_x_right, gpu_remap_y_right, roughly_projector_area_ratio_in_image
     save_mid_res = save_mid_res_for_visulize
     image_seq_start_index = default_image_seq_start_index
     start_time = time.time()
@@ -233,12 +234,13 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
     return prj_area_posi, rectified_belief_map, rectified_img_phase, camera_kd, sub_pixel_map
 
 
-def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bayer_color_image=False):
+def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bayer_color_image=True, use_blue_chan_only=False):
     # return depth map in mili-meter
-    global global_reading_img_time
+    global global_reading_img_time, convert_bayer
     if rectifier is None: rectifier = StereoRectify(scale=1.0, cali_file=pattern_path+'calib.yml')
     if images is not None: images_left, images_right = images[0], images[1]
     else: images_left, images_right = None, None
+    if use_blue_chan_only: convert_bayer = convert_bayer_blue
     ### Rectify and Decode 
     pipe_start_time = start_time = time.time()
     gray_left, belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = index_decoding_from_images(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left, is_bayer_color_image=is_bayer_color_image)

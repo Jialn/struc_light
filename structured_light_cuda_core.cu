@@ -8,11 +8,11 @@ __global__ void cuda_test(float *dest, float *a, float *b, float *offset) // a s
 // a function to convert RGGB bayer image to single blue channle image
 __global__ void convert_bayer_to_blue(unsigned char *src, int *height_array, int *width_array)
 {   
-    int width = width_array[0], width_half = width_array[0] / 2;
+    int width = width_array[0], width_half = width_array[0] / 2, width_div4 = width_array[0] / 4, height_div2 = height_array[0] / 2;
     int idx_div4 = threadIdx.x + blockIdx.x*blockDim.x;
     int h_div2 = idx_div4 / width_half, w_div2 = idx_div4 % width_half;
     int idx = h_div2 * 2 * width + w_div2 * 2;
-    if (idx > width+1) {    // if not the first line
+    if (h_div2 % height_div2 != 0) {    // if not the first line
         src[idx] = ((int)src[idx-width-1] + (int)src[idx-width+1] + (int)src[idx+width-1] + (int)src[idx+width+1]+2) / 4;  // R
         src[idx+1] = ((int)src[idx-width+1] + (int)src[idx+width+1]+1) /2;  //G
     }
@@ -22,6 +22,78 @@ __global__ void convert_bayer_to_blue(unsigned char *src, int *height_array, int
     }
     src[idx+width] = ((int)src[idx+width-1] + (int)src[idx+width+1]+1) / 2; //G
     //src[idx+width+1] = src[idx+width+1]; //B
+}
+
+// a function to convert RGGB bayer image to single channle gray image
+__global__ void convert_bayer_to_gray(unsigned char *src, int *height_array, int *width_array)
+{   
+    int width = width_array[0], width_half = width_array[0] / 2, width_div4 = width_array[0] / 4, height_div2 = height_array[0] / 2;
+    int idx_div4 = threadIdx.x + blockIdx.x*blockDim.x;
+    int h_div2 = idx_div4 / width_half, w_div2 = idx_div4 % width_half;
+    int idx = h_div2 * 2 * width + w_div2 * 2;
+    int r_value[4], b_value[4], g_value[4];
+    int idx_r=idx, idx_g=idx+1, idx_g2=idx+width, idx_b=idx+width+1;
+    if (h_div2 % height_div2 == 0) {    // if the first line
+        // R
+        r_value[0] = src[idx];
+        b_value[0] = ((int)src[idx+width-1] + (int)src[idx+width+1]+1) / 2;
+        if (w_div2 == 0) g_value[0] = ((int)src[idx+1] + (int)src[idx+width] + 1) / 2;
+        else g_value[0] = ((int)src[idx-1] + (int)src[idx+1] + (int)src[idx+width] + 1) / 3;
+        // G
+        r_value[1] = ((int)src[idx_g-1] + (int)src[idx_g+1] + 1) / 2;
+        g_value[1] = src[idx_g];
+        b_value[1] = src[idx_g+width];
+        // G
+        r_value[2] = src[idx_g2+width];
+        g_value[2] = src[idx_g2];
+        b_value[2] = ((int)src[idx_g2-1] + (int)src[idx_g2+1] + 1) / 2;
+        // B
+        r_value[3] = ((int)src[idx_b+width-1] + (int)src[idx_b+width+1] + 1) / 2;
+        g_value[3] = ((int)src[idx_b+width] + (int)src[idx_b-1] + (int)src[idx_b+1] + 2) / 3;
+        b_value[3] = src[idx_b];
+    }
+    else if (h_div2 % height_div2 == height_div2-1) {   // if the last line
+        // R
+        r_value[0] = src[idx];
+        g_value[0] = ((int)src[idx-width] + (int)src[idx-1] + (int)src[idx+1] + 1) / 3;
+        if (w_div2 == width_half-1) b_value[0] = src[idx-width-1];
+        else b_value[0] = ((int)src[idx-width-1] + (int)src[idx-width+1] + 1) / 2;
+        // G
+        r_value[1] = ((int)src[idx_g-1] + (int)src[idx_g+1] + 1) / 2;
+        g_value[1] = src[idx_g];
+        b_value[1] = ((int)src[idx_g-width] + (int)src[idx_g+width] + 1) /2;
+        // G
+        r_value[2] = src[idx_g2-width];
+        g_value[2] = src[idx_g2];
+        b_value[2] = ((int)src[idx_g2-1] + (int)src[idx_g2+1] + 1) /2;
+        // B
+        r_value[3] = ((int)src[idx_b-width-1] + (int)src[idx_b-width+1] + 1) / 2;
+        g_value[3] = ((int)src[idx_b-width] + (int)src[idx_b-1] + (int)src[idx_b+1] + 2) / 4;
+        b_value[3] = src[idx_b];
+
+    }
+    else {
+        // R
+        r_value[0] = src[idx];
+        g_value[0] = ((int)src[idx-width] + (int)src[idx+width] + (int)src[idx-1] + (int)src[idx+1] + 2) / 4;
+        b_value[0] = ((int)src[idx-width-1] + (int)src[idx-width+1] + (int)src[idx+width-1] + (int)src[idx+width+1] + 2) / 4;
+        // G
+        r_value[1] = ((int)src[idx_g-1] + (int)src[idx_g+1] + 1) / 2;
+        g_value[1] = src[idx_g];
+        b_value[1] = ((int)src[idx_g-width] + (int)src[idx_g+width] + 1) / 2;
+        // G
+        r_value[2] = ((int)src[idx_g2-width] + (int)src[idx_g2+width] + 1) / 2;
+        g_value[2] = src[idx_g2];
+        b_value[2] = ((int)src[idx_g2-1] + (int)src[idx_g2+1] + 1) / 2;
+        // B
+        r_value[3] = ((int)src[idx_b-width-1] + (int)src[idx_b-width+1] + (int)src[idx_b+width-1] + (int)src[idx_b+width+1] + 2) / 4;
+        g_value[3] = ((int)src[idx_b-width] + (int)src[idx_b+width] + (int)src[idx_b-1] + (int)src[idx_b+1] + 2) / 4;
+        b_value[3] = src[idx_b];
+    }
+    src[idx_r]  = (r_value[0] + g_value[0] + b_value[0] + 1) / 3;
+    src[idx_g]  = (r_value[1] + g_value[1] + b_value[1] + 1) / 3;
+    src[idx_g2] = (r_value[2] + g_value[2] + b_value[2] + 1) / 3;
+    src[idx_b]  = (r_value[3] + g_value[3] + b_value[3] + 1) / 3;
 }
 
 __global__ void gray_decode(unsigned char *src, unsigned char *avg_thres_posi, unsigned char *avg_thres_nega, unsigned char *valid_map, int *image_num, int *height, int *width, short *img_index, int *unvalid_thres)
@@ -206,7 +278,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         if (cnt_r != 0) average_corres_position_in_thres_r = average_corres_position_in_thres_r / cnt_r;
         // check possiblely outliers using max_allow_pixel_per_index and belief_map
         #ifdef use_belief_map_for_checking
-        bool checkright = (most_corres_pts_r_bf==-1 & most_corres_pts_l_bf==-1);
+        bool checkright = (most_corres_pts_r_bf==-1 | most_corres_pts_l_bf==-1);
         #else
         bool checkright = (belief_map_r[line_start_addr_offset+(int)(w_r+0.499999)]==0);
         #endif
