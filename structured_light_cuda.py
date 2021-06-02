@@ -8,7 +8,8 @@ import time
 import numpy as np
 import pycuda.driver as cuda
 import pycuda.autoinit
-from pycuda.compiler import SourceModule
+from pycuda.compiler import CudaModule
+from pycuda.driver import module_from_buffer
 from stereo_rectify import StereoRectify
 import depth_map_utils as utils
 
@@ -18,6 +19,7 @@ phase_decoding_unvalid_thres = 2    # if the diff of pixel in an inversed patter
                                     # e.g., 1, 2, 5 for low-expo real captured images; 2, 5, 20 for normal or high expo rendered images.
                                     # lower value may bring many wrongly paried left and right indexs, but looks good on drak objects
 use_belief_map_for_checking = True  # use enhanced matching with belief_map, gives more robust matching result, but a little bit slower;
+                                    # this option is not working when using pre-built cuda binaries beacuse it's set before compiling
 remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
 flying_points_filter_checking_range = 0.003     # about 5-10 times of resolution per projector pxiel
@@ -40,10 +42,19 @@ enable_depth_map_post_processing = True
 
 ### read and compile cu file
 dir_path = os.path.dirname(os.path.realpath(__file__))  # dir of this file
-with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
-    cuda_src_string = f.read()
-if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
-cuda_module = SourceModule(cuda_src_string)
+cuda_module = CudaModule()
+if os.path.exists(dir_path + "/structured_light_cuda_core.cu"):
+    with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
+        cuda_src_string = f.read()
+    if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
+    cubin_compiled = pycuda.compiler.compile(cuda_src_string, nvcc="nvcc", options=None, keep=False, no_extern_c=False, arch=None, code=None, cache_dir=None, include_dirs=[])
+    with open(dir_path + "/structured_light_cuda_core.cubin", "wb") as f:
+        f.write(cubin_compiled)
+else:
+    with open(dir_path + "/structured_light_cuda_core.cubin", "rb") as f:
+        cubin_compiled = f.read()
+cuda_module.module = module_from_buffer(cubin_compiled)
+cuda_module._bind_module()
 
 convert_bayer = cuda_module.get_function("convert_bayer_to_gray")
 convert_bayer_blue = cuda_module.get_function("convert_bayer_to_blue")
@@ -234,13 +245,18 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
     return prj_area_posi, rectified_belief_map, rectified_img_phase, camera_kd, sub_pixel_map
 
 
-def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bayer_color_image=True, use_blue_chan_only=False):
+def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bayer_color_image=False, use_blue_chan_only=False):
     # return depth map in mili-meter
     global global_reading_img_time, convert_bayer
     if rectifier is None: rectifier = StereoRectify(scale=1.0, cali_file=pattern_path+'calib.yml')
     if images is not None: images_left, images_right = images[0], images[1]
     else: images_left, images_right = None, None
-    if use_blue_chan_only: convert_bayer = convert_bayer_blue
+    if is_bayer_color_image:
+        if use_blue_chan_only: 
+            convert_bayer = convert_bayer_blue
+            print("bayer_color, demosac to blue")
+        else: print("bayer_color, demosac to gray")
+
     ### Rectify and Decode 
     pipe_start_time = start_time = time.time()
     gray_left, belief_map_left, img_index_left, camera_kd_l, img_index_left_sub_px = index_decoding_from_images(pattern_path, '_l.bmp', rectifier=rectifier, res_path=res_path, images=images_left, is_bayer_color_image=is_bayer_color_image)

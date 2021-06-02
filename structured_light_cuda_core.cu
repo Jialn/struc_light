@@ -8,7 +8,7 @@ __global__ void cuda_test(float *dest, float *a, float *b, float *offset) // a s
 // a function to convert RGGB bayer image to single blue channle image
 __global__ void convert_bayer_to_blue(unsigned char *src, int *height_array, int *width_array)
 {   
-    int width = width_array[0], width_half = width_array[0] / 2, width_div4 = width_array[0] / 4, height_div2 = height_array[0] / 2;
+    int width = width_array[0], width_half = width_array[0] / 2, height_div2 = height_array[0] / 2;
     int idx_div4 = threadIdx.x + blockIdx.x*blockDim.x;
     int h_div2 = idx_div4 / width_half, w_div2 = idx_div4 % width_half;
     int idx = h_div2 * 2 * width + w_div2 * 2;
@@ -27,7 +27,7 @@ __global__ void convert_bayer_to_blue(unsigned char *src, int *height_array, int
 // a function to convert RGGB bayer image to single channle gray image
 __global__ void convert_bayer_to_gray(unsigned char *src, int *height_array, int *width_array)
 {   
-    int width = width_array[0], width_half = width_array[0] / 2, width_div4 = width_array[0] / 4, height_div2 = height_array[0] / 2;
+    int width = width_array[0], width_half = width_array[0] / 2, height_div2 = height_array[0] / 2;
     int idx_div4 = threadIdx.x + blockIdx.x*blockDim.x;
     int h_div2 = idx_div4 / width_half, w_div2 = idx_div4 % width_half;
     int idx = h_div2 * 2 * width + w_div2 * 2;

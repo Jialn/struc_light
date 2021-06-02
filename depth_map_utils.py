@@ -62,8 +62,10 @@ DIAMOND_KERNEL_5 = np.array(
         [0, 1, 1, 1, 0],
         [0, 0, 1, 0, 0],
     ], dtype=np.uint8)
+    
 def cross_kernel(n):
     return cv2.getStructuringElement(cv2.MORPH_CROSS, (n, n))
+
 def depth_map_post_processing(depth_map, max_depth=3000.0,
                               use_morphology_closure=False, large_hole_Fill=False, use_median_filter=True):
     """Optional fill small holes and additional noise removal that provides better qualitative results.
