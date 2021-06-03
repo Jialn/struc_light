@@ -64,6 +64,7 @@ flying_points_filter_cuda_kernel = cuda_module.get_function("flying_points_filte
 gen_depth_from_index_matching_cuda_kernel = cuda_module.get_function("gen_depth_from_index_matching")
 rectify_phase_and_belief_map_cuda_kernel = cuda_module.get_function("rectify_phase_and_belief_map")
 depth_filter_cuda_kernel = cuda_module.get_function("depth_filter")
+depth_median_filter_cuda_kernel = cuda_module.get_function("depth_median_filter")
 optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
 convert_dmap_to_mili_meter = cuda_module.get_function("convert_dmap_to_mili_meter")
 
@@ -111,6 +112,12 @@ def depth_filter_cuda(depth_map, height, width, belief_map):
     depth_filter_cuda_kernel(depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unvalid_thres)), belief_map,
+        block=(width//4, 1, 1), grid=(height*4, 1))
+
+def depth_median_filter_cuda(depth_map, height, width):
+    depth_median_filter_cuda_kernel(depth_map,
+        cuda.In(np.int32(height)), cuda.In(np.int32(width)),
+        cuda.In(np.int32(depth_filter_max_length)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def from_gpu(gpu_data, size_sample, dtype):
@@ -225,8 +232,8 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
     print("phase decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res:
         # check for the unrectified phase
-        images_phsft_v = (from_gpu(img_phase, size_sample=prj_area_posi, dtype=np.float32)*4.0).astype(np.uint8)
-        cv2.imwrite(res_path + "/ph_correspondence_l" + appendix[:2] + "_unrectified.png", images_phsft_v)
+        # images_phsft_v = (from_gpu(img_phase, size_sample=prj_area_posi, dtype=np.float32)*4.0).astype(np.uint8)
+        # cv2.imwrite(res_path + "/ph_correspondence_l" + appendix[:2] + "_unrectified.png", images_phsft_v)
         prj_valid_map_bin = from_gpu(prj_valid_map, size_sample=prj_area_posi, dtype=np.uint8)
         cv2.imwrite(res_path + "/prj_valid_map_gpu" + appendix[:2] + "_bin.png", prj_valid_map_bin)
     
@@ -289,6 +296,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
     print("flying point filter: %.3f s" % (time.time() - start_time))
     if use_depth_filter:
         start_time = time.time()
+        # depth_median_filter_cuda(gpu_depth_map_filtered, height, width)
         depth_filter_cuda(gpu_depth_map_filtered, height, width, belief_map_left)
         print("depth smothing filter: %.3f s" % (time.time() - start_time))
     # readout
@@ -304,6 +312,14 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
     if enable_depth_map_post_processing:
         start_time = time.time()
         depth_map = utils.depth_map_post_processing(depth_map)
+
+        # valid_pixels = (depth_map > 0.1)
+        # inverted_depths = np.zeros_like(depth_map)
+        # inverted_depths[valid_pixels] = (3000 - depth_map)[valid_pixels]
+        # blurred = cv2.medianBlur(inverted_depths, 3)
+        # blurred = 3000 - blurred
+        # depth_map[valid_pixels] = blurred[valid_pixels]
+
         print("depth post processing: %.3f s" % (time.time() - start_time))
     global_reading_img_time = 0
     ### Save Mid Results for visualizing

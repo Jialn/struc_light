@@ -446,7 +446,8 @@ __global__ void depth_filter(float *depth_map, int *height_array, int *width_arr
                 break;
             }
         }
-        if (!stop_flag) depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
+        // if (!stop_flag)
+        depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
         __threadfence();  // make sure the modification to depth_map is visiable for all other threads
         __syncthreads();
         // vertical
@@ -468,7 +469,37 @@ __global__ void depth_filter(float *depth_map, int *height_array, int *width_arr
                 break;
             }
         }
-        if (!stop_flag) depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
+        // if (!stop_flag)
+        depth_map[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
+    }
+}
+
+__device__ __forceinline__ float get_mid(float a, float b, float c)
+{
+    return a > b ? (b > c ? b : ( a > c ? c : a)) : ( a > c ? a: (b > c ? c : a));
+}
+
+__global__ void depth_median_filter(float *depth_map, int *height_array, int *width_array, int *depth_filter_max_length)
+{   // filter_max_length (ksize) fixed to 1 for now
+    int height = height_array[0];
+    int width = width_array[0];
+    int filter_max_length = 1; //depth_filter_max_length[0]; // 1, 2
+
+    int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int h = blockIdx.x / 4;
+    int w = current_pix_idx % width;
+    float curr_pix_value = depth_map[current_pix_idx];
+    if (curr_pix_value != 0 & h != 0 & h!= height-1 & w !=0 & w != width-1) {
+        // horizontal
+        if(depth_map[current_pix_idx-1] != 0 & depth_map[current_pix_idx+1] != 0) {
+            depth_map[current_pix_idx] = get_mid(depth_map[current_pix_idx-1], depth_map[current_pix_idx], depth_map[current_pix_idx+1]);
+        }
+        __threadfence();  // make sure the modification to depth_map is visiable for all other threads
+        __syncthreads();
+        // vertical
+        if(depth_map[current_pix_idx-width] != 0 & depth_map[current_pix_idx+width] != 0) {
+            depth_map[current_pix_idx] = get_mid(depth_map[current_pix_idx-width], depth_map[current_pix_idx], depth_map[current_pix_idx+width]);
+        }
     }
 }
 
