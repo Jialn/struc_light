@@ -25,7 +25,7 @@ depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
 flying_points_filter_checking_range = 0.003     # about 5-10 times of resolution per projector pxiel
 flying_points_filter_minmum_points_in_checking_range = 5  # including the point itself, will also add a ratio of width // 400
 use_depth_filter = True                         # a filter that smothing the image while preserves local structure
-depth_filter_max_length = 3                     # from 0 - 6
+depth_filter_max_length = 2                     # from 0 - 6
 depth_filter_unvalid_thres = 0.001
 
 roughly_projector_area_ratio_in_image = None    # the roughly prjector area in image / image width, e.g., 0.5, 0.75, 1.0, 1.25
@@ -37,7 +37,7 @@ default_image_seq_start_index = 24      # in some datasets, (0, 24) are for pure
 save_mid_res_for_visulize = False
 visulize_res = True
 
-enable_depth_map_post_processing = True
+depth_map_post_processing = False       # cpu post processing
 
 
 ### read and compile cu file
@@ -63,8 +63,10 @@ phase_shift_decode_cuda_kernel = cuda_module.get_function("phase_shift_decode")
 flying_points_filter_cuda_kernel = cuda_module.get_function("flying_points_filter")
 gen_depth_from_index_matching_cuda_kernel = cuda_module.get_function("gen_depth_from_index_matching")
 rectify_phase_and_belief_map_cuda_kernel = cuda_module.get_function("rectify_phase_and_belief_map")
-depth_filter_cuda_kernel = cuda_module.get_function("depth_filter")
-depth_median_filter_cuda_kernel = cuda_module.get_function("depth_median_filter")
+depth_filter_w_cuda_kernel = cuda_module.get_function("depth_filter_w")
+depth_filter_h_cuda_kernel = cuda_module.get_function("depth_filter_h")
+depth_median_filter_w_cuda_kernel = cuda_module.get_function("depth_median_filter_w")
+depth_median_filter_h_cuda_kernel = cuda_module.get_function("depth_median_filter_h")
 optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
 convert_dmap_to_mili_meter = cuda_module.get_function("convert_dmap_to_mili_meter")
 
@@ -108,14 +110,22 @@ def flying_points_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd
         cuda.In(camera_kd_l), cuda.In(np.float32(flying_points_filter_checking_range)), cuda.In(np.int32(flying_points_filter_minmum_points_in_checking_range)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def depth_filter_cuda(depth_map, height, width, belief_map):
-    depth_filter_cuda_kernel(depth_map,
+def depth_filter_cuda(depth_map_mid_res, depth_map, height, width, belief_map):
+    depth_filter_w_cuda_kernel(depth_map_mid_res, depth_map,
+        cuda.In(np.int32(height)), cuda.In(np.int32(width)),
+        cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unvalid_thres)), belief_map,
+        block=(width//4, 1, 1), grid=(height*4, 1))
+    depth_filter_h_cuda_kernel(depth_map, depth_map_mid_res,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unvalid_thres)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def depth_median_filter_cuda(depth_map, height, width):
-    depth_median_filter_cuda_kernel(depth_map,
+def depth_median_filter_cuda(depth_map_mid_res, depth_map, height, width):
+    depth_median_filter_w_cuda_kernel(depth_map_mid_res, depth_map,
+        cuda.In(np.int32(height)), cuda.In(np.int32(width)),
+        cuda.In(np.int32(depth_filter_max_length)),
+        block=(width//4, 1, 1), grid=(height*4, 1))
+    depth_median_filter_h_cuda_kernel(depth_map, depth_map_mid_res,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_filter_max_length)),
         block=(width//4, 1, 1), grid=(height*4, 1))
@@ -281,10 +291,12 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
     gpu_unoptimized_depth_map = cuda.mem_alloc(gray_left.nbytes*4) # np.empty_like(gray_left, dtype=np.float32)
     gpu_depth_map_raw = cuda.mem_alloc(gray_left.nbytes*4)
     gpu_depth_map_filtered = cuda.mem_alloc(gray_left.nbytes*4)
+    gpu_depth_map_filtered_mid_res = cuda.mem_alloc(gray_left.nbytes*4)
     depth_map = np.empty_like(gray_left, dtype=np.float32)
     # print("alloc mem for maps: %.3f s" % (time.time() - start_time))  # less than 1ms
     ### Infer DepthMap from Index Matching
     start_time = time.time()
+    # depth_median_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_unoptimized_depth_map, height, width)
     gen_depth_from_index_matching_cuda(gpu_unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right, roughly_projector_area_ratio_in_image)
     print("index matching and depth map generating: %.3f s" % (time.time() - start_time))
     start_time = time.time()
@@ -296,12 +308,11 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
     print("flying point filter: %.3f s" % (time.time() - start_time))
     if use_depth_filter:
         start_time = time.time()
-        # depth_median_filter_cuda(gpu_depth_map_filtered, height, width)
-        depth_filter_cuda(gpu_depth_map_filtered, height, width, belief_map_left)
+        depth_median_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width)
+        depth_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width, belief_map_left)
         print("depth smothing filter: %.3f s" % (time.time() - start_time))
     # readout
     convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1))
-
     start_time = time.time()
     cuda.memcpy_dtoh(depth_map, gpu_depth_map_filtered)
     print("readout from gpu: %.3f s" % (time.time() - start_time))
@@ -309,17 +320,9 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
     print("- Total time: %.3f s" % (time.time() - pipe_start_time))
     print("- Total time without reading imgs and pre-built rectify maps: %.3f s" % (time.time() - pipe_start_time - global_reading_img_time))
 
-    if enable_depth_map_post_processing:
+    if depth_map_post_processing:
         start_time = time.time()
         depth_map = utils.depth_map_post_processing(depth_map)
-
-        # valid_pixels = (depth_map > 0.1)
-        # inverted_depths = np.zeros_like(depth_map)
-        # inverted_depths[valid_pixels] = (3000 - depth_map)[valid_pixels]
-        # blurred = cv2.medianBlur(inverted_depths, 3)
-        # blurred = 3000 - blurred
-        # depth_map[valid_pixels] = blurred[valid_pixels]
-
         print("depth post processing: %.3f s" % (time.time() - start_time))
     global_reading_img_time = 0
     ### Save Mid Results for visualizing
