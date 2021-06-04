@@ -308,6 +308,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         if (outliers_flag==true) continue;
         // get stereo diff and depth
         float stereo_diff = dmap_base[0] + w_l - w_r;
+        if (stereo_diff < 0) stereo_diff = - stereo_diff;
         if (stereo_diff > 0.000001) {
             float depth = fx[0] * baseline[0] / stereo_diff;
             if ((depth_cutoff_near < depth) & (depth < depth_cutoff_far)) depth_map[curr_pix_idx] = depth;
