@@ -1,6 +1,19 @@
 import cv2
 import numpy as np
 
+
+def convert_depth_to_color(depth_map_mm, scale=None):
+    h, w = depth_map_mm.shape[:2]
+    depth_image_color_vis = depth_map_mm.copy()
+    valid_points = np.where(depth_image_color_vis>=0.1)
+    depth_near_cutoff, depth_far_cutoff = np.min(depth_image_color_vis[valid_points]), np.max(depth_image_color_vis[valid_points])
+    # print((depth_near_cutoff, depth_far_cutoff))
+    depth_image_color_vis[valid_points] = depth_far_cutoff - depth_image_color_vis[valid_points]  # - depth_near_cutoff
+    depth_image_color_vis = cv2.applyColorMap(cv2.convertScaleAbs(depth_image_color_vis, alpha=255/(depth_far_cutoff-depth_near_cutoff)), cv2.COLORMAP_JET)  #COLORMAP_JET HOT
+    if scale is not None:
+        depth_image_color_vis = cv2.resize(depth_image_color_vis, ((int)(w*scale), (int)(h*scale)))
+    return depth_image_color_vis
+
 def gen_point_clouds_from_images(depth, camera_kp, image, save_path=None):
     """Generate PointCloud from images and camera kp
     """
@@ -27,6 +40,42 @@ def gen_point_clouds_from_images(depth, camera_kp, image, save_path=None):
         o3d.io.write_point_cloud(save_path, pcd_to_write, write_ascii=False, compressed=False)
         print("res saved to:" + save_path)
     return pcd
+
+def report_depth_error(depth_img, depth_gt, image_path, default_image_seq_start_index, save_mid_res_for_visulize, res_path):
+    gray_img = cv2.imread(image_path + str(default_image_seq_start_index) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
+    gray_img_dark = cv2.imread(image_path + str(default_image_seq_start_index+1) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
+    projector_area_diff = gray_img - gray_img_dark
+    projector_area = np.where(projector_area_diff > 5)
+    valid_points = np.where(depth_img>=1.0)
+    error_img = (depth_img - depth_gt)[valid_points]
+
+    pxiel_num = depth_img.shape[0]*depth_img.shape[1]
+    valid_points_num, valid_points_gt_num = len(valid_points[0]), len(projector_area[0])
+    # # error below 10.0mm
+    error_img = error_img[np.where((error_img<10.0)&(error_img>-10.0))]
+    print("valid points rate below 10mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
+    print("average_error(mm):" + str(np.average(abs(error_img))))
+    # error below 1.0mm
+    error_img = error_img[np.where((error_img<1.0)&(error_img>-1.0))]
+    print("valid points rate below 1mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
+    print("average_error(mm):" + str(np.average(abs(error_img))))
+    # error below 0.25mm
+    error_img = error_img[np.where((error_img<0.25)&(error_img>-0.25))]
+    print("valid points rate below 0.25mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
+    print("average_error(mm):" + str(np.average(abs(error_img))))
+    if save_mid_res_for_visulize:
+        # write error map
+        error_map_thres = 0.25
+        unvalid_points = np.where(depth_img<=1.0)
+        diff = depth_img - depth_gt
+        depth_img_show_error = (depth_img * 255.0 / 2000.0).astype(np.uint8)
+        error_part = depth_img_show_error.copy()
+        error_part[np.where((diff>error_map_thres)|(diff<-error_map_thres))] = 255
+        error_part[unvalid_points] = 0
+        depth_img_show_error = cv2.cvtColor(depth_img_show_error, cv2.COLOR_GRAY2RGB)
+        depth_img_show_error[:,:,2] = error_part
+        cv2.imwrite(res_path + "/error_map.png", depth_img_show_error)
+
 
 # Full kernels
 FULL_KERNEL_3 = np.ones((3, 3), np.uint8)

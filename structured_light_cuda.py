@@ -363,54 +363,20 @@ if __name__ == "__main__":
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     
-
-    def report_depth_error(depth_img, depth_gt):
-        gray_img = cv2.imread(image_path + str(default_image_seq_start_index) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
-        gray_img_dark = cv2.imread(image_path + str(default_image_seq_start_index+1) + "_l.bmp", cv2.IMREAD_UNCHANGED).astype(np.int16)
-        projector_area_diff = gray_img - gray_img_dark
-        projector_area = np.where(projector_area_diff > 5)
-        valid_points = np.where(depth_img>=1.0)
-        error_img = (depth_img - depth_gt)[valid_points]
-
-        pxiel_num = depth_img.shape[0]*depth_img.shape[1]
-        valid_points_num, valid_points_gt_num = len(valid_points[0]), len(projector_area[0])
-        # # error below 10.0mm
-        error_img = error_img[np.where((error_img<10.0)&(error_img>-10.0))]
-        print("valid points rate below 10mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
-        print("average_error(mm):" + str(np.average(abs(error_img))))
-        # error below 1.0mm
-        error_img = error_img[np.where((error_img<1.0)&(error_img>-1.0))]
-        print("valid points rate below 1mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
-        print("average_error(mm):" + str(np.average(abs(error_img))))
-        # error below 0.25mm
-        error_img = error_img[np.where((error_img<0.25)&(error_img>-0.25))]
-        print("valid points rate below 0.25mm: " + str(error_img.shape[0]) + "/" + str(valid_points_gt_num) + ", " + str(100*error_img.shape[0]/valid_points_gt_num)+"%")
-        print("average_error(mm):" + str(np.average(abs(error_img))))
-        if save_mid_res_for_visulize:
-            # write error map
-            error_map_thres = 0.25
-            unvalid_points = np.where(depth_img<=1.0)
-            diff = depth_img - depth_gt
-            depth_img_show_error = (depth_img * 255.0 / 2000.0).astype(np.uint8)
-            error_part = depth_img_show_error.copy()
-            error_part[np.where((diff>error_map_thres)|(diff<-error_map_thres))] = 255
-            error_part[unvalid_points] = 0
-            depth_img_show_error = cv2.cvtColor(depth_img_show_error, cv2.COLOR_GRAY2RGB)
-            depth_img_show_error[:,:,2] = error_part
-            cv2.imwrite(res_path + "/error_map.png", depth_img_show_error)
-
     if os.path.exists(image_path + "depth_gt.exr"):
         gt_depth = cv2.imread(image_path + "depth_gt.exr", cv2.IMREAD_UNCHANGED)[:,:,0]
         gt_depth = gt_depth * 1000.0  # scale to mili-meter
         rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
-        gt_depth_rectified = rectifier.rectify_image(gt_depth) #, interpolation=cv2.INTER_NEAREST
-        report_depth_error(depth_map_mm, gt_depth_rectified)
+        gt_depth_rectified = rectifier.rectify_image(gt_depth, interpolation=cv2.INTER_NEAREST) #, interpolation=cv2.INTER_NEAREST
+        utils.report_depth_error(depth_map_mm, gt_depth_rectified, image_path, default_image_seq_start_index, save_mid_res_for_visulize, res_path)
     else:
         valid_points = np.where(depth_map_mm>=1.0)
         print("valid points: " + str(len(valid_points[0])))
-    
+
     ### build point cloud and visualize
     if visulize_res:
+        cv2.imshow("depth", utils.convert_depth_to_color(depth_map_mm, 0.5))
+        # cv2.waitKey()
         import open3d as o3d
         fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
         if os.path.exists(image_path + "color.bmp"): gray = cv2.imread(image_path + "color.bmp")
