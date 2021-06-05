@@ -239,7 +239,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         int cnt_l = 0, cnt_r = 0;
         float average_corres_position_in_thres_l = 0, average_corres_position_in_thres_r = 0;
         if (last_right_corres_point > 0) {  // fast checking around last_right_corres_point
-            checking_left_edge = last_right_corres_point - right_corres_point_offset_range;
+            checking_left_edge = last_right_corres_point - right_corres_point_offset_range + 1;
             checking_right_edge = last_right_corres_point + right_corres_point_offset_range + stride;
             if (checking_left_edge <=0) checking_left_edge=0;
             if (checking_right_edge >=width) checking_right_edge=width;
@@ -278,7 +278,8 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         if (cnt_r != 0) average_corres_position_in_thres_r = average_corres_position_in_thres_r / cnt_r;
         // check possiblely outliers using max_allow_pixel_per_index and belief_map
         #ifdef use_belief_map_for_checking
-        bool checkright = (most_corres_pts_r_bf==-1 | most_corres_pts_l_bf==-1);
+        bool belief_map_pair_mismatch = (most_corres_pts_r_bf==-1 | most_corres_pts_l_bf==-1);
+        bool checkright = belief_map_pair_mismatch | (belief_map_r[line_start_addr_offset+(int)(w_r+0.499999)]==0);
         #else
         bool checkright = (belief_map_r[line_start_addr_offset+(int)(w_r+0.499999)]==0);
         #endif
@@ -294,7 +295,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         float w_l = img_index_left_sub_px[curr_pix_idx];
         // check possiblely left outliers
         #ifdef use_belief_map_for_checking
-        bool checkleft = checkright; // | (belief_map_l[curr_pix_idx]==0);
+        bool checkleft = belief_map_pair_mismatch | (belief_map_l[curr_pix_idx]==0);
         #else
         bool checkleft = (belief_map_l[curr_pix_idx]==0);
         #endif
@@ -308,7 +309,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         if (outliers_flag==true) continue;
         // get stereo diff and depth
         float stereo_diff = dmap_base[0] + w_l - w_r;
-        if (stereo_diff < 0) stereo_diff = - stereo_diff;
+        if (dmap_base[0] < 0) stereo_diff = - stereo_diff;
         if (stereo_diff > 0.000001) {
             float depth = fx[0] * baseline[0] / stereo_diff;
             if ((depth_cutoff_near < depth) & (depth < depth_cutoff_far)) depth_map[curr_pix_idx] = depth;
@@ -470,7 +471,7 @@ __global__ void depth_filter_h(float *depth_map_out, float *depth_map, int *heig
         float left_weight = 0.0, right_weight = 0.0, depth_sum = curr_pix_value*filter_weights[0];
         for (int i=1; i< filter_max_length+1; i++) {
             int l_idx = h-i, r_idx = h+i;
-            if (!(l_idx > 0 & r_idx < width)) break;
+            if (!(l_idx > 0 & r_idx < height)) break;
             else if (depth_map[l_idx*width+w] != 0 & depth_map[r_idx*width+w] != 0 & \
                     abs(depth_map[l_idx*width+w] - curr_pix_value) < filter_thres & abs(depth_map[r_idx*width+w] - curr_pix_value) < filter_thres) {
                 left_weight += filter_weights[i];

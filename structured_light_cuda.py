@@ -417,4 +417,5 @@ if __name__ == "__main__":
         pcd = utils.gen_point_clouds_from_images(depth_map_mm, camera_kp, gray, save_path=res_path)
         pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         pcd.translate(np.zeros(3), relative=False)
-        o3d.visualization.draw(geometry=pcd, width=1800, height=1000, point_size=1)
+        o3d.visualization.draw(geometry=pcd, width=1800, height=1000, point_size=2,
+            bg_color=(0.5, 0.5, 0.5, 0.5), show_ui=True)
