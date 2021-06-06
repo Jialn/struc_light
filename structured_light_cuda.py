@@ -22,11 +22,12 @@ use_belief_map_for_checking = True  # use enhanced matching with belief_map, giv
                                     # this option is not working when using pre-built cuda binaries beacuse it's set before compiling
 remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
-flying_points_filter_checking_range = 0.003     # about 5-10 times of resolution per projector pxiel
-flying_points_filter_minmum_points_in_checking_range = 5  # including the point itself, will also add a ratio of width // 400
+flying_points_filter_checking_range = 0.005     # about 5-10 times of resolution per projector pxiel
+flying_points_filter_minmum_points_in_checking_range = 10  # including the point itself, will also add a ratio of width // 300
 use_depth_filter = True                         # a filter that smothing the image while preserves local structure
 depth_filter_max_length = 2                     # from 0 - 6
-depth_filter_unvalid_thres = 0.001
+depth_filter_unconsis_thres = 0.001
+subpix_optimize_unconsis_thres = 0.002
 
 roughly_projector_area_ratio_in_image = None    # the roughly prjector area in image / image width, e.g., 0.5, 0.75, 1.0, 1.25
                                                 # this parameter assume projector resolution is 1K, and decoded index should have the same value as projector's pix
@@ -36,6 +37,7 @@ default_image_seq_start_index = 24      # in some datasets, (0, 24) are for pure
 
 save_mid_res_for_visulize = False
 visulize_res = True
+save_pointcloud = False                 # save point cloud for test when visulize_res is enabled
 
 depth_map_post_processing = False       # cpu post processing
 
@@ -46,16 +48,16 @@ cuda_module = CudaModule()
 if os.path.exists(dir_path + "/structured_light_cuda_core.cu"):
     with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
         cuda_src_string = f.read()
-    if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
-    cubin_compiled = pycuda.compiler.compile(cuda_src_string, nvcc="nvcc", options=None, keep=False, no_extern_c=False, arch=None, code=None, cache_dir=None, include_dirs=[])
+    if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n #define subpix_optimize_unconsis_thres " + str(subpix_optimize_unconsis_thres) + cuda_src_string
+    cubin_file = pycuda.compiler.compile(cuda_src_string, nvcc="nvcc", options=None, keep=False, no_extern_c=False, arch=None, code=None, cache_dir=None, include_dirs=[])
     with open(dir_path + "/structured_light_cuda_core.cubin", "wb") as f:
-        f.write(cubin_compiled)
+        f.write(cubin_file)
 else:
     with open(dir_path + "/structured_light_cuda_core.cubin", "rb") as f:
-        cubin_compiled = f.read()
-cuda_module.module = module_from_buffer(cubin_compiled)
+        cubin_file = f.read()
+cuda_module.module = module_from_buffer(cubin_file)
 cuda_module._bind_module()
-
+### add cuda funtions
 convert_bayer = cuda_module.get_function("convert_bayer_to_gray")
 convert_bayer_blue = cuda_module.get_function("convert_bayer_to_blue")
 gray_decode_cuda_kernel = cuda_module.get_function("gray_decode")
@@ -113,11 +115,11 @@ def flying_points_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd
 def depth_filter_cuda(depth_map_mid_res, depth_map, height, width, belief_map):
     depth_filter_w_cuda_kernel(depth_map_mid_res, depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
-        cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unvalid_thres)), belief_map,
+        cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unconsis_thres)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
     depth_filter_h_cuda_kernel(depth_map, depth_map_mid_res,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
-        cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unvalid_thres)), belief_map,
+        cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unconsis_thres)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def depth_median_filter_cuda(depth_map_mid_res, depth_map, height, width):
@@ -332,8 +334,8 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
         depth_map_raw = from_gpu(gpu_depth_map_raw, size_sample=gray_left, dtype=np.float32)
         depth_map_raw_uint16 = depth_map_raw * 30000  # meter
         cv2.imwrite(res_path + '/depth_alg2_raw.png', depth_map_raw_uint16.astype(np.uint16), [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
-        belief_map_left = np.clip(from_gpu(belief_map_left, size_sample=gray_left, dtype=np.uint16) * 255, 0, 255).astype(np.uint8)
-        belief_map_right = np.clip(from_gpu(belief_map_right, size_sample=gray_left, dtype=np.uint16) * 255, 0, 255).astype(np.uint8)
+        belief_map_left = np.clip(from_gpu(belief_map_left, size_sample=gray_left, dtype=np.uint16)*64, 0, 255).astype(np.uint8)
+        belief_map_right = np.clip(from_gpu(belief_map_right, size_sample=gray_left, dtype=np.uint16)*64, 0, 255).astype(np.uint8)
         images_phsft_left_v = (from_gpu(img_index_left, size_sample=gray_left, dtype=np.float32)*4.0).astype(np.uint8)
         images_phsft_right_v = (from_gpu(img_index_right, size_sample=gray_left, dtype=np.float32)*4.0).astype(np.uint8)
         cv2.imwrite(res_path + "/belief_map_left.png", belief_map_left)
@@ -361,13 +363,14 @@ if __name__ == "__main__":
     
     rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
-    gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
+    if not save_mid_res_for_visulize:  # test again for speed of not inital case
+        gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     
     if os.path.exists(image_path + "depth_gt.exr"):
         gt_depth = cv2.imread(image_path + "depth_gt.exr", cv2.IMREAD_UNCHANGED)[:,:,0]
         gt_depth = gt_depth * 1000.0  # scale to mili-meter
         rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
-        gt_depth_rectified = rectifier.rectify_image(gt_depth, interpolation=cv2.INTER_NEAREST) #, interpolation=cv2.INTER_NEAREST
+        gt_depth_rectified = rectifier.rectify_image(gt_depth)  # interpolation=cv2.INTER_NEAREST
         utils.report_depth_error(depth_map_mm, gt_depth_rectified, image_path, default_image_seq_start_index, save_mid_res_for_visulize, res_path)
     else:
         valid_points = np.where(depth_map_mm>=1.0)
@@ -380,7 +383,7 @@ if __name__ == "__main__":
         import open3d as o3d
         fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
         if os.path.exists(image_path + "color.bmp"): gray = cv2.imread(image_path + "color.bmp")
-        pcd = utils.gen_point_clouds_from_images(depth_map_mm, camera_kp, gray, save_path=res_path)
+        pcd = utils.gen_point_clouds_from_images(depth_map_mm, camera_kp, gray, save_path=res_path if save_pointcloud else None)
         pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         pcd.translate(np.zeros(3), relative=False)
         o3d.visualization.draw(geometry=pcd, width=1800, height=1000, point_size=2,

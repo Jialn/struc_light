@@ -35,7 +35,7 @@ def gen_point_clouds_from_images(depth, camera_kp, image, save_path=None):
     if save_path is not None:
         if save_path[-4:] != '.ply': save_path = save_path + "/points.ply"
         pcd_to_write = copy.deepcopy(pcd)
-        pcd_to_write.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=2, max_nn=10))
+        pcd_to_write.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=2, max_nn=8))
         pcd_to_write.orient_normals_towards_camera_location()
         o3d.io.write_point_cloud(save_path, pcd_to_write, write_ascii=False, compressed=False)
         print("res saved to:" + save_path)
