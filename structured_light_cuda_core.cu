@@ -319,6 +319,61 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     }
 }
 
+/*
+__global__ void fix_depth_from_mono_index_matching(float *depth_map, int *height_array, int *width_array, float *img_index_left, float *baseline,float *dmap_base,float *fx, float *img_index_left_sub_px, short *belief_map_l, float *roughly_projector_area_in_image, float *depth_cutoff, int *remove_possibly_outliers_when_matching)
+{
+    float depth_cutoff_near = depth_cutoff[0], depth_cutoff_far = depth_cutoff[1];
+    int width = width_array[0];
+    float projector_area_ratio = roughly_projector_area_in_image[0];
+    float index_thres_for_matching = 1.5 * 1280.0 / (width*projector_area_ratio);  //the smaller projector_area in image, the larger index_offset cloud be
+    int right_corres_point_offset_range = (1.333 * projector_area_ratio * width) / 128;
+    bool check_outliers = (remove_possibly_outliers_when_matching[0] != 0);
+
+    int h = blockIdx.x;
+    int start = 0, end = width;
+    int line_start_addr_offset = h * width;
+    float *line_l = img_index_left + line_start_addr_offset;
+    int last_right_corres_point = -1;
+    float baseline_prjector = 0;
+    float index_to_pix_a = 0, index_to_pix_b = 0;  // remaped_pix_pos = a * index_value + b
+
+    prj_diff = fx[0] * baseline_prjector / depth
+    stereo_diff = fx[0] * baseline[0] / depth
+
+    baseline_prjector = 
+    prj_diff = w - remaped_prj_pix_pos
+    remaped_pix_pos = a * index_value + b
+
+    w - (a * index_value + b) = fx[0] * baseline_prjector / depth
+
+    depth * (w - (a * index_value + b))  = fx[0] * baseline_prjector
+
+    baseline_prjector = (w - a * index_value - b) * depth / fx
+
+    (w1 - a * index_value1 - b) * depth1 = (w2 - a * index_value2 - b) * depth2 
+    w1*d1 - a*idx1*d1 -b*d1 = w2*d2 - a*idx2*d2 - b*d2
+
+    b*(d2-d1) = w2*d2 - a*idx2*d2 - w1*d1 + a*idx1*d1
+
+    for (int w = start; w < end; w+=1) {
+        int curr_pix_idx = line_start_addr_offset + w;
+        depth_map[curr_pix_idx] = 0.0;
+        if (isnan(line_l[w])) {
+            last_right_corres_point = -1;
+            continue;
+        }
+
+        // get stereo diff and depth
+        float stereo_diff = dmap_base[0] + w_l - w_r;
+        if (dmap_base[0] < 0) stereo_diff = - stereo_diff;
+        if (stereo_diff > 0.000001) {
+            float depth = fx[0] * baseline[0] / stereo_diff;
+            if ((depth_cutoff_near < depth) & (depth < depth_cutoff_far)) depth_map[curr_pix_idx] = depth;
+        }
+    }
+}
+*/
+
 __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optimized_depth_map, int *height_array, int *width_array, float *img_index_left_sub_px)
 {
     // interpo for depth map using sub-pixel map
