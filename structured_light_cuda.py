@@ -343,6 +343,10 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
         cv2.imwrite(res_path + "/ph_correspondence_l.png", images_phsft_left_v)
         cv2.imwrite(res_path + "/ph_correspondence_r.png", images_phsft_right_v)
     ### Prepare results
+    utils.calculate_mono_struli_para(depth_map, fx, from_gpu(img_index_left, size_sample=gray_left, dtype=np.float32),
+    line=600, col_range=(1320, 1350))
+    exit()
+
     gray_img = rectifier.rectify_image(gray_left)
     return gray_img, depth_map, camera_kd_l
 
@@ -381,9 +385,7 @@ if __name__ == "__main__":
         cv2.waitKey(50)
         import open3d as o3d
         fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
-        if os.path.exists(image_path + "color.bmp"):
-            gray = cv2.imread(image_path + "color.bmp")
-            # gray = rectifier.rectify_image(gray)
+        if os.path.exists(image_path + "color.bmp"): gray = cv2.imread(image_path + "color.bmp")
         pcd = utils.gen_point_clouds_from_images(depth_map_mm, camera_kp, gray, save_path=res_path if save_pointcloud else None)
         pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         pcd.translate(np.zeros(3), relative=False)

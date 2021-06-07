@@ -6,29 +6,35 @@ def calculate_mono_struli_para(depth_map, fx, index_map, line, col_range):
     # utils.calculate_mono_struli_para(depth_map, fx, from_gpu(img_index_left, size_sample=gray_left, dtype=np.float32),
     #    line=600, col_range=(320, 360))
     from scipy.optimize import least_squares
-    test_line = depth_map[line,col_range[0]:col_range[1]]
-    test_line_index = index_map[line,col_range[0]:col_range[1]]
-    test_line_valid_pts = np.where(test_line > 0.1)[0]
+    test_line = depth_map[line,]
+    test_line_index = index_map[line,]
+    test_line_valid_pts = np.where(test_line > 0.1)[0][col_range[0]:col_range[1]]
     w_array = test_line_valid_pts
     index_value_array = test_line_index[test_line_valid_pts]
-    depth_array = test_line[test_line_valid_pts] / 1000.0
-    print(w_array)
-    print(index_value_array)
-    print(depth_array)
+    depth_array = test_line[test_line_valid_pts]
+    print("w_array", w_array)
+    print("index_value_array", index_value_array)
+    print("depth_array", depth_array)
     
-    def residuals(p, w_array, index_value_array, depth_array):
+    def residuals_for_disparity(p, w_array, index_value_array, depth_array):
         # print("call")
         baseline_prjector = 0.14
         # baseline_prjector, a, b = p
         a, b, c = p
         return (w_array - (a * index_value_array * index_value_array + b * index_value_array + c)) - (fx * baseline_prjector / depth_array)
     
-    p0 = [0.1, 1, 10]
-    print(residuals(p0, w_array, index_value_array, depth_array))
+    def residuals_for_depth(p, w_array, index_value_array, depth_array):
+        # print("call")
+        baseline_prjector, a, b = p
+        return depth_array - fx * baseline_prjector / (w_array - a * index_value_array - b)
+    
+    residuals = residuals_for_depth
+    p0 = [100, 1.5, -100]
+    print("residuals before", residuals(p0, w_array, index_value_array, depth_array))
     leastsq_res = least_squares(residuals, p0, args=(w_array, index_value_array, depth_array), method='trf', jac='3-point',
         ftol=1e-15, xtol=1e-15, gtol=1e-15, x_scale=1.0, loss='soft_l1')
     # baseline_prjector, a, b = leastsq_res.x
-    print(residuals(leastsq_res.x, w_array, index_value_array, depth_array))
+    print("residuals after", residuals(leastsq_res.x, w_array, index_value_array, depth_array))
     print(leastsq_res)
     return leastsq_res.x
 
