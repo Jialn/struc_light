@@ -369,7 +369,6 @@ if __name__ == "__main__":
     if os.path.exists(image_path + "depth_gt.exr"):
         gt_depth = cv2.imread(image_path + "depth_gt.exr", cv2.IMREAD_UNCHANGED)[:,:,0]
         gt_depth = gt_depth * 1000.0  # scale to mili-meter
-        rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
         gt_depth_rectified = rectifier.rectify_image(gt_depth)  # interpolation=cv2.INTER_NEAREST
         utils.report_depth_error(depth_map_mm, gt_depth_rectified, image_path, default_image_seq_start_index, save_mid_res_for_visulize, res_path)
     else:
@@ -378,13 +377,15 @@ if __name__ == "__main__":
 
     ### build point cloud and visualize
     if visulize_res:
-        cv2.imshow("depth", utils.convert_depth_to_color(depth_map_mm, 0.5))
-        # cv2.waitKey()
+        cv2.imshow("depth", utils.convert_depth_to_color(depth_map_mm, scale=None))
+        cv2.waitKey(50)
         import open3d as o3d
         fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
-        if os.path.exists(image_path + "color.bmp"): gray = cv2.imread(image_path + "color.bmp")
+        if os.path.exists(image_path + "color.bmp"):
+            gray = cv2.imread(image_path + "color.bmp")
+            # gray = rectifier.rectify_image(gray)
         pcd = utils.gen_point_clouds_from_images(depth_map_mm, camera_kp, gray, save_path=res_path if save_pointcloud else None)
         pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         pcd.translate(np.zeros(3), relative=False)
-        o3d.visualization.draw(geometry=pcd, width=1800, height=1000, point_size=2,
+        o3d.visualization.draw(geometry=pcd, width=1800, height=1000, point_size=1,
             bg_color=(0.5, 0.5, 0.5, 0.5), show_ui=True)

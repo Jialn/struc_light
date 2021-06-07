@@ -1,15 +1,48 @@
 import cv2
 import numpy as np
 
+def calculate_mono_struli_para(depth_map, fx, index_map, line, col_range):
+    # usage example:
+    # utils.calculate_mono_struli_para(depth_map, fx, from_gpu(img_index_left, size_sample=gray_left, dtype=np.float32),
+    #    line=600, col_range=(320, 360))
+    from scipy.optimize import least_squares
+    test_line = depth_map[line,col_range[0]:col_range[1]]
+    test_line_index = index_map[line,col_range[0]:col_range[1]]
+    test_line_valid_pts = np.where(test_line > 0.1)[0]
+    w_array = test_line_valid_pts
+    index_value_array = test_line_index[test_line_valid_pts]
+    depth_array = test_line[test_line_valid_pts] / 1000.0
+    print(w_array)
+    print(index_value_array)
+    print(depth_array)
+    
+    def residuals(p, w_array, index_value_array, depth_array):
+        # print("call")
+        baseline_prjector = 0.14
+        # baseline_prjector, a, b = p
+        a, b, c = p
+        return (w_array - (a * index_value_array * index_value_array + b * index_value_array + c)) - (fx * baseline_prjector / depth_array)
+    
+    p0 = [0.1, 1, 10]
+    print(residuals(p0, w_array, index_value_array, depth_array))
+    leastsq_res = least_squares(residuals, p0, args=(w_array, index_value_array, depth_array), method='trf', jac='3-point',
+        ftol=1e-15, xtol=1e-15, gtol=1e-15, x_scale=1.0, loss='soft_l1')
+    # baseline_prjector, a, b = leastsq_res.x
+    print(residuals(leastsq_res.x, w_array, index_value_array, depth_array))
+    print(leastsq_res)
+    return leastsq_res.x
 
 def convert_depth_to_color(depth_map_mm, scale=None):
     h, w = depth_map_mm.shape[:2]
     depth_image_color_vis = depth_map_mm.copy()
     valid_points = np.where(depth_image_color_vis>=0.1)
-    depth_near_cutoff, depth_far_cutoff = np.min(depth_image_color_vis[valid_points]), np.max(depth_image_color_vis[valid_points])
+    # depth_near_cutoff, depth_far_cutoff = np.min(depth_image_color_vis[valid_points]), np.max(depth_image_color_vis[valid_points])
+    depth_near_cutoff, depth_far_cutoff = np.percentile(depth_image_color_vis[valid_points], 1), np.percentile(depth_image_color_vis[valid_points], 99)
+    depth_far_cutoff = depth_near_cutoff + (depth_far_cutoff-depth_near_cutoff) * 1.2
+    depth_range = depth_far_cutoff-depth_near_cutoff
     # print((depth_near_cutoff, depth_far_cutoff))
     depth_image_color_vis[valid_points] = depth_far_cutoff - depth_image_color_vis[valid_points]  # - depth_near_cutoff
-    depth_image_color_vis = cv2.applyColorMap(cv2.convertScaleAbs(depth_image_color_vis, alpha=255/(depth_far_cutoff-depth_near_cutoff)), cv2.COLORMAP_JET)  #COLORMAP_JET HOT
+    depth_image_color_vis = cv2.applyColorMap(cv2.convertScaleAbs(depth_image_color_vis, alpha=255/(depth_range)), cv2.COLORMAP_JET)  #COLORMAP_JET HOT
     if scale is not None:
         depth_image_color_vis = cv2.resize(depth_image_color_vis, ((int)(w*scale), (int)(h*scale)))
     return depth_image_color_vis
