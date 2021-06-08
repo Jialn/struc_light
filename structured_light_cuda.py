@@ -343,9 +343,10 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
         cv2.imwrite(res_path + "/ph_correspondence_l.png", images_phsft_left_v)
         cv2.imwrite(res_path + "/ph_correspondence_r.png", images_phsft_right_v)
     ### Prepare results
+    col_range=(740, 790)
     utils.calculate_mono_struli_para(depth_map, fx, from_gpu(img_index_left, size_sample=gray_left, dtype=np.float32),
-    line=600, col_range=(1320, 1350))
-    exit()
+        line=600, col_range=col_range)
+    depth_map[600, col_range[0]:col_range[1]] = 0
 
     gray_img = rectifier.rectify_image(gray_left)
     return gray_img, depth_map, camera_kd_l
@@ -382,7 +383,7 @@ if __name__ == "__main__":
     ### build point cloud and visualize
     if visulize_res:
         cv2.imshow("depth", utils.convert_depth_to_color(depth_map_mm, scale=None))
-        cv2.waitKey(50)
+        if (sys.platform != 'win32'): cv2.waitKey(50)
         import open3d as o3d
         fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
         if os.path.exists(image_path + "color.bmp"): gray = cv2.imread(image_path + "color.bmp")
