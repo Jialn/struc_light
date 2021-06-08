@@ -2,9 +2,11 @@ import cv2
 import numpy as np
 
 def calculate_mono_struli_para(depth_map, fx, index_map, line, col_range):
+    # not working yet
     # usage example:
     # utils.calculate_mono_struli_para(depth_map, fx, from_gpu(img_index_left, size_sample=gray_left, dtype=np.float32),
-    #    line=600, col_range=(320, 360))
+    #    line=600, col_range=(420, 450))
+    # col_range=(420, 450)
     from scipy.optimize import least_squares
     test_line = depth_map[line,]
     test_line_index = index_map[line,]
@@ -34,6 +36,7 @@ def calculate_mono_struli_para(depth_map, fx, index_map, line, col_range):
     # baseline_to_prjector, a, b = leastsq_res.x
     print("residuals after", residuals(leastsq_res.x, w_array, index_value_array, depth_array))
     print(leastsq_res)
+    # depth_map[600, test_line_valid_pts] = 0
     return leastsq_res.x
 
 def convert_depth_to_color(depth_map_mm, scale=None):

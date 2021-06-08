@@ -343,11 +343,6 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
         cv2.imwrite(res_path + "/ph_correspondence_l.png", images_phsft_left_v)
         cv2.imwrite(res_path + "/ph_correspondence_r.png", images_phsft_right_v)
     ### Prepare results
-    col_range=(740, 790)
-    utils.calculate_mono_struli_para(depth_map, fx, from_gpu(img_index_left, size_sample=gray_left, dtype=np.float32),
-        line=600, col_range=col_range)
-    depth_map[600, col_range[0]:col_range[1]] = 0
-
     gray_img = rectifier.rectify_image(gray_left)
     return gray_img, depth_map, camera_kd_l
 
