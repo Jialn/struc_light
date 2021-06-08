@@ -209,14 +209,14 @@ __device__ __forceinline__ void pix_index_matching(float *line_l, float *line_r,
     }
 }
 
-__global__ void gen_depth_from_index_matching(float *depth_map, int *height_array, int *width_array, float *img_index_left, float *img_index_right, float *baseline,float *dmap_base,float *fx, float *img_index_left_sub_px,float *img_index_right_sub_px, short *belief_map_l, short *belief_map_r, float *roughly_projector_area_in_image, float *depth_cutoff, int *remove_possibly_outliers_when_matching)
+__global__ void gen_depth_from_index_matching(float *depth_map, int *height_array, int *width_array, float *img_index_left, float *img_index_right, float *baseline,float *dmap_base,float *fx,
+    float *img_index_left_sub_px,float *img_index_right_sub_px, short *belief_map_l, short *belief_map_r, float *roughly_projector_area_in_image, float *depth_cutoff)
 {
     float depth_cutoff_near = depth_cutoff[0], depth_cutoff_far = depth_cutoff[1];
     int width = width_array[0];
     float projector_area_ratio = roughly_projector_area_in_image[0];
     float index_thres_for_matching = 1.5 * 1280.0 / (width*projector_area_ratio);  //the smaller projector_area in image, the larger index_offset cloud be
     int right_corres_point_offset_range = (1.333 * projector_area_ratio * width) / 128;
-    bool check_outliers = (remove_possibly_outliers_when_matching[0] != 0);
     // if another pixel has similar index( < index_thres_for_outliers_checking) has a distance > max_allow_pixel_per_index, consider it's an outlier 
     float max_allow_pixel_per_index_for_outliers_checking = 2.5 + 1.0 * projector_area_ratio * width / 1280.0;
     float index_thres_for_outliers_checking = index_thres_for_matching * 1.2;
@@ -284,13 +284,15 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         bool belief_map_pair_mismatch = (abs(belief_map_l[curr_pix_idx] - belief_map_r[line_start_addr_offset+w_r_int]) > bfmap_thres_for_outliers) &  (most_corres_pts_r_bf==-1 | most_corres_pts_l_bf==-1);
         bool checkright = belief_map_pair_mismatch | (belief_map_r[line_start_addr_offset+w_r_int]==0);
         bool checkleft = belief_map_pair_mismatch | (belief_map_l[curr_pix_idx]==0);
+        #ifdef strong_outliers_checking
         if (belief_map_pair_mismatch & (belief_map_r[line_start_addr_offset+w_r_int]==0) ) outliers_flag=true;
         if (belief_map_pair_mismatch & (belief_map_l[curr_pix_idx]==0)) outliers_flag=true;
+        #endif
         #else
         bool checkright = (belief_map_r[line_start_addr_offset+w_r_int]==0);
         bool checkleft = (belief_map_l[curr_pix_idx]==0);
         #endif
-        if (check_outliers & checkright) {  // & belief_map_r[line_start_addr_offset+w_r_int]==0
+        if (checkright) {
             if (most_corres_pts_l != -1 & abs((float)(most_corres_pts_l-w_r)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
             if (most_corres_pts_r != -1 & abs((float)(most_corres_pts_r-w_r)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
             if (average_corres_position_in_thres_l != 0 & abs((float)(average_corres_position_in_thres_l-w_r)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
@@ -301,7 +303,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
         // left index
         float w_l = img_index_left_sub_px[curr_pix_idx];
         // check possiblely left outliers
-        if (check_outliers & checkleft) {
+        if (checkleft) {
             for (int i=0; i < width; i++) {
                 if ((line_l[w]-index_thres_for_outliers_checking <= line_l[i]) & (line_l[i] <= line_l[w]+index_thres_for_outliers_checking)) {
                     if (abs((float)(w_l-i)) > max_allow_pixel_per_index_for_outliers_checking) outliers_flag = true;
@@ -319,61 +321,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     }
 }
 
-/*
-__global__ void fix_depth_from_mono_index_matching(float *depth_map, int *height_array, int *width_array, float *img_index_left, float *baseline,float *dmap_base,float *fx, float *img_index_left_sub_px, short *belief_map_l, float *roughly_projector_area_in_image, float *depth_cutoff, int *remove_possibly_outliers_when_matching)
-{
-    float depth_cutoff_near = depth_cutoff[0], depth_cutoff_far = depth_cutoff[1];
-    int width = width_array[0];
-    float projector_area_ratio = roughly_projector_area_in_image[0];
-    float index_thres_for_matching = 1.5 * 1280.0 / (width*projector_area_ratio);  //the smaller projector_area in image, the larger index_offset cloud be
-    int right_corres_point_offset_range = (1.333 * projector_area_ratio * width) / 128;
-    bool check_outliers = (remove_possibly_outliers_when_matching[0] != 0);
-
-    int h = blockIdx.x;
-    int start = 0, end = width;
-    int line_start_addr_offset = h * width;
-    float *line_l = img_index_left + line_start_addr_offset;
-    int last_right_corres_point = -1;
-    float baseline_prjector = 0;
-    float index_to_pix_a = 0, index_to_pix_b = 0;  // remaped_pix_pos = a * index_value + b
-
-    prj_diff = fx[0] * baseline_prjector / depth
-    stereo_diff = fx[0] * baseline[0] / depth
-
-    baseline_prjector = 
-    prj_diff = w - remaped_prj_pix_pos
-    remaped_pix_pos = a * index_value + b
-
-    w - (a * index_value + b) = fx[0] * baseline_prjector / depth
-
-    depth * (w - (a * index_value + b))  = fx[0] * baseline_prjector
-
-    baseline_prjector = (w - a * index_value - b) * depth / fx
-
-    (w1 - a * index_value1 - b) * depth1 = (w2 - a * index_value2 - b) * depth2 
-    w1*d1 - a*idx1*d1 -b*d1 = w2*d2 - a*idx2*d2 - b*d2
-
-    b*(d2-d1) = w2*d2 - a*idx2*d2 - w1*d1 + a*idx1*d1
-
-    for (int w = start; w < end; w+=1) {
-        int curr_pix_idx = line_start_addr_offset + w;
-        depth_map[curr_pix_idx] = 0.0;
-        if (isnan(line_l[w])) {
-            last_right_corres_point = -1;
-            continue;
-        }
-
-        // get stereo diff and depth
-        float stereo_diff = dmap_base[0] + w_l - w_r;
-        if (dmap_base[0] < 0) stereo_diff = - stereo_diff;
-        if (stereo_diff > 0.000001) {
-            float depth = fx[0] * baseline[0] / stereo_diff;
-            if ((depth_cutoff_near < depth) & (depth < depth_cutoff_far)) depth_map[curr_pix_idx] = depth;
-        }
-    }
-}
-*/
-
+//#define drop_possible_outliers_edges_during_sub_pix true
 __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optimized_depth_map, int *height_array, int *width_array, float *img_index_left_sub_px)
 {
     // interpo for depth map using sub-pixel map
@@ -404,7 +352,12 @@ __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optim
         right_pos = real_pos_for_current_depth;
         right_value = depth_map[current_pix_idx];
         if (depth_map[current_pix_idx-1] == 0) {
-            optimized_depth_map[current_pix_idx] = 0; //right_value;
+            #ifdef drop_possible_outliers_edges_during_sub_pix
+            if (depth_map[current_pix_idx-2] == 0) optimized_depth_map[current_pix_idx] = 0;
+            else optimized_depth_map[current_pix_idx] = right_value;
+            #else
+            optimized_depth_map[current_pix_idx] = right_value;
+            #endif
             return;
         }
         else if (abs(right_value - depth_map[current_pix_idx-1]) < subpix_optimize_unconsis_thres) {
@@ -420,8 +373,12 @@ __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optim
         left_pos = real_pos_for_current_depth;
         left_value = depth_map[current_pix_idx];
         if (depth_map[current_pix_idx+1] == 0) {
-            optimized_depth_map[current_pix_idx] = 0; // left_value;
-            return;
+            #ifdef drop_possible_outliers_edges_during_sub_pix
+            if (depth_map[current_pix_idx+2] == 0) optimized_depth_map[current_pix_idx] = 0;
+            else optimized_depth_map[current_pix_idx] = left_value;
+            #else
+            optimized_depth_map[current_pix_idx] = left_value;
+            #endif
         } else if (abs(left_value - depth_map[current_pix_idx+1]) < subpix_optimize_unconsis_thres) {
             right_pos = img_index_left_sub_px[current_pix_idx+1];
             right_value = depth_map[current_pix_idx+1];

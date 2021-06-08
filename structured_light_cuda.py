@@ -19,8 +19,8 @@ phase_decoding_unvalid_thres = 2    # if the diff of pixel in an inversed patter
                                     # e.g., 1, 2, 5 for low-expo real captured images; 2, 5, 20 for normal or high expo rendered images.
                                     # lower value may bring many wrongly paried left and right indexs, but looks good on drak objects
 use_belief_map_for_checking = True  # use enhanced matching with belief_map, gives more robust matching result, but a little bit slower;
+strong_outliers_checking = False    # stronger outliers filter, possiblly remove pts not outliers. use with caution
                                     # this option is not working when using pre-built cuda binaries beacuse it's set before compiling
-remove_possibly_outliers_when_matching = True
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
 flying_points_filter_checking_range = 0.005     # about 5-10 times of resolution per projector pxiel
 flying_points_filter_minmum_points_in_checking_range = 10  # including the point itself, will also add a ratio of width // 300
@@ -48,7 +48,9 @@ cuda_module = CudaModule()
 if os.path.exists(dir_path + "/structured_light_cuda_core.cu"):
     with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
         cuda_src_string = f.read()
-    if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n #define subpix_optimize_unconsis_thres " + str(subpix_optimize_unconsis_thres) + cuda_src_string
+    cuda_src_string = "#define subpix_optimize_unconsis_thres " + str(subpix_optimize_unconsis_thres) + cuda_src_string
+    if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
+    if strong_outliers_checking: cuda_src_string = "#define strong_outliers_checking true\n" + cuda_src_string
     cubin_file = pycuda.compiler.compile(cuda_src_string, nvcc="nvcc", options=None, keep=False, no_extern_c=False, arch=None, code=None, cache_dir=None, include_dirs=[])
     with open(dir_path + "/structured_light_cuda_core.cubin", "wb") as f:
         f.write(cubin_file)
@@ -97,7 +99,6 @@ def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left,
         cuda.In(np.float32(baseline)), cuda.In(np.float32(dmap_base)),cuda.In(np.float32(fx)),
         img_index_left_sub_px, img_index_right_sub_px, belief_map_left,belief_map_right, 
         cuda.In(np.float32(roughly_projector_area_ratio)), cuda.In(np.float32([depth_cutoff_near, depth_cutoff_far])),
-        cuda.In(np.int32(remove_possibly_outliers_when_matching)),
         block=(4, 16, 1), grid=(height, 1))
 
 def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, height,width, img_index_left_sub_px):
