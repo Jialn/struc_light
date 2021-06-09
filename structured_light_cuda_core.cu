@@ -121,6 +121,31 @@ __global__ void gray_decode(unsigned char *src, unsigned char *avg_thres_posi, u
     img_index[idx] = bin_code;
 }
 
+__global__ void gray_decode_hdr(unsigned short *src, unsigned short *avg_thres_posi, unsigned short *avg_thres_nega, unsigned char *valid_map, int *image_num, int *height, int *width, short *img_index, int *unvalid_thres)
+{
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    bool pix_is_valid = ((int)avg_thres_posi[idx] - (int)avg_thres_nega[idx]) > unvalid_thres[0];
+    // valid_map[idx] = pix_is_valid*255;  // if visulize valid map is needed
+    if (! pix_is_valid) {
+        img_index[idx] = -1;
+        return;
+    }
+    int avg_thres = avg_thres_posi[idx]/2 + avg_thres_nega[idx]/2;
+    int bin_code = 0;
+    int current_bin_code_bit = 0;
+    for (unsigned int i = 0; i < image_num[0]; i++) {
+        int src_idx = idx + i * height[0] * width[0];
+        if (src[src_idx]>=avg_thres) current_bin_code_bit = current_bin_code_bit ^ 1;
+        else if (src[src_idx]<=avg_thres) current_bin_code_bit = current_bin_code_bit ^ 0;
+        else {
+            bin_code = -1;
+            break;
+        }
+        bin_code += (current_bin_code_bit <<  (image_num[0]-1-i));
+    }
+    img_index[idx] = bin_code;
+}
+
 #define PI 3.14159265358979
 __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, float *img_phase, short *img_index, int *unvalid_thres, float *phsift_pattern_period_per_pixel_array)
 {
@@ -144,6 +169,44 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
         return;
     }
     float phase = - atan2f(i4-i2, i3-i1) + PI;
+    int phase_main_index = img_index[idx] / 2 ;
+    int phase_sub_index = img_index[idx] & 0x01;
+    if((phase_sub_index == 0) & (phase > PI*1.5))  phase -= 2.0*PI; 
+    if((phase_sub_index == 1) & (phase < PI*0.5))  phase += 2.0*PI; 
+    img_phase[idx] = phase_main_index * phsift_pattern_period_per_pixel + (phase * phsift_pattern_period_per_pixel / (2*PI));
+    //reuse img_index as belief map
+    bool need_outliers_checking_flag = (belief_value <= outliers_checking_diff_thres); //(abs(i4 - i2) <= outliers_checking_diff_thres & abs(i3 - i1) <= outliers_checking_diff_thres);
+    if (need_outliers_checking_flag) img_index[idx] = 0;
+    else img_index[idx] = belief_value;
+}
+
+__global__ void phase_shift_decode_hdr(unsigned short *src, int *height, int *width, float *img_phase, short *img_index, int *unvalid_thres, float *phsift_pattern_period_per_pixel_array)
+{
+    float phsift_pattern_period_per_pixel = phsift_pattern_period_per_pixel_array[0];
+    float unvalid_thres_diff = unvalid_thres[0];
+    float outliers_checking_diff_thres = 10.0 + unvalid_thres_diff; //above this, will skip outlier checking
+    float gamma_correction = 2.0;
+
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    if (img_index[idx] == -1) {
+        img_phase[idx] = nanf("");
+        img_index[idx] = 0;  //reuse img_index as belief map
+        return;
+    }
+    float i1 = src[idx], i2 = src[idx + height[0] * width[0]];
+    float i3 = src[idx + 2 * height[0] * width[0]], i4 = src[idx + 3 * height[0] * width[0]];
+    int belief_value = abs(i4 - i2) + abs(i3 - i1);
+    bool unvalid_flag = (belief_value <= unvalid_thres_diff); //(abs(i4 - i2) <= unvalid_thres_diff & abs(i3 - i1) <= unvalid_thres_diff);
+    if (unvalid_flag) {
+        img_phase[idx] = nanf("");
+        img_index[idx] = 0;
+        return;
+    }
+    float i1_c = powf(i1, gamma_correction);
+    float i2_c = powf(i2, gamma_correction);
+    float i3_c = powf(i3, gamma_correction);
+    float i4_c = powf(i4, gamma_correction);
+    float phase = - atan2f(i4_c-i2_c, i3_c-i1_c) + PI;
     int phase_main_index = img_index[idx] / 2 ;
     int phase_sub_index = img_index[idx] & 0x01;
     if((phase_sub_index == 0) & (phase > PI*1.5))  phase -= 2.0*PI; 
@@ -321,7 +384,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
     }
 }
 
-//#define drop_possible_outliers_edges_during_sub_pix true
+#define drop_possible_outliers_edges_during_sub_pix true
 __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optimized_depth_map, int *height_array, int *width_array, float *img_index_left_sub_px)
 {
     // interpo for depth map using sub-pixel map

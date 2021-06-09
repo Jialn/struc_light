@@ -64,6 +64,8 @@ convert_bayer = cuda_module.get_function("convert_bayer_to_gray")
 convert_bayer_blue = cuda_module.get_function("convert_bayer_to_blue")
 gray_decode_cuda_kernel = cuda_module.get_function("gray_decode")
 phase_shift_decode_cuda_kernel = cuda_module.get_function("phase_shift_decode")
+gray_decode_hdr_cuda_kernel = cuda_module.get_function("gray_decode_hdr")
+phase_shift_decode_hdr_cuda_kernel = cuda_module.get_function("phase_shift_decode_hdr")
 flying_points_filter_cuda_kernel = cuda_module.get_function("flying_points_filter")
 gen_depth_from_index_matching_cuda_kernel = cuda_module.get_function("gen_depth_from_index_matching")
 rectify_phase_and_belief_map_cuda_kernel = cuda_module.get_function("rectify_phase_and_belief_map")
@@ -74,17 +76,29 @@ depth_median_filter_h_cuda_kernel = cuda_module.get_function("depth_median_filte
 optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
 convert_dmap_to_mili_meter = cuda_module.get_function("convert_dmap_to_mili_meter")
 
-def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map, image_num, height,width, img_index, unvalid_thres):
-    gray_decode_cuda_kernel(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map,
-        cuda.In(np.int32(image_num)),cuda.In(np.int32(height)),cuda.In(np.int32(width)),
-        img_index,cuda.In(np.int32(unvalid_thres)),
-        block=(width//4, 1, 1), grid=(height*4, 1))
+def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map, image_num, height,width, img_index, unvalid_thres, is_hdr_images):
+    if is_hdr_images:
+        gray_decode_hdr_cuda_kernel(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map,
+            cuda.In(np.int32(image_num)),cuda.In(np.int32(height)),cuda.In(np.int32(width)),
+            img_index,cuda.In(np.int32(unvalid_thres)),
+            block=(width//4, 1, 1), grid=(height*4, 1))
+    else:
+        gray_decode_cuda_kernel(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map,
+            cuda.In(np.int32(image_num)),cuda.In(np.int32(height)),cuda.In(np.int32(width)),
+            img_index,cuda.In(np.int32(unvalid_thres)),
+            block=(width//4, 1, 1), grid=(height*4, 1))
 
-def phase_shift_decode_cuda(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres):
-    phase_shift_decode_cuda_kernel(images_phsft_src,
-        cuda.In(np.int32(height)),cuda.In(np.int32(width)),
-        img_phase,img_index,cuda.In(np.int32(phase_decoding_unvalid_thres)),cuda.In(np.float32(phsift_pattern_period_per_pixel)),
-        block=(width//4, 1, 1), grid=(height*4, 1))
+def phase_shift_decode_cuda(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres, is_hdr_images):
+    if is_hdr_images:
+        phase_shift_decode_hdr_cuda_kernel(images_phsft_src,
+            cuda.In(np.int32(height)),cuda.In(np.int32(width)),
+            img_phase,img_index,cuda.In(np.int32(phase_decoding_unvalid_thres)),cuda.In(np.float32(phsift_pattern_period_per_pixel)),
+            block=(width//4, 1, 1), grid=(height*4, 1))
+    else:
+        phase_shift_decode_cuda_kernel(images_phsft_src,
+            cuda.In(np.int32(height)),cuda.In(np.int32(width)),
+            img_phase,img_index,cuda.In(np.int32(phase_decoding_unvalid_thres)),cuda.In(np.float32(phsift_pattern_period_per_pixel)),
+            block=(width//4, 1, 1), grid=(height*4, 1))
 
 def rectify_phase_and_belief_map_cuda(img_phase, belief_map, rectify_map_x, rectify_map_y, height,width, rectified_img_phase, rectified_belief_map, sub_pixel_map):
     rectify_phase_and_belief_map_cuda_kernel(img_phase, belief_map, rectify_map_x, rectify_map_y,
@@ -175,6 +189,8 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
         images_graycode = images[image_seq_start_index+2:image_seq_start_index+10] # gray code posi images
         images_phsft = images[image_seq_start_index+10:image_seq_start_index+14] # phase shift images
 
+    height, width = prj_area_posi.shape[:2]
+    pix_num = height * width
     if rectifier.remap_x_left_scaled is None: # to build the internal LUT map
         _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)
         rectify_map_x_left, rectify_map_y_left, camera_kd_left = rectifier.remap_x_left_scaled, rectifier.remap_y_left_scaled, rectifier.rectified_camera_kd_l
@@ -194,23 +210,23 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
         roughly_projector_area_ratio_in_image = np.sqrt(projector_area_pix/total_pix)
         print("estimated valid_area_ratio: "+str(roughly_projector_area_ratio_in_image))
     if img_phase is None:
-        img_phase = cuda.mem_alloc(prj_area_posi.nbytes*4)  # float32
-        img_index = cuda.mem_alloc(prj_area_posi.nbytes*2)  # int16
+        img_phase = cuda.mem_alloc(pix_num*4)  # float32
+        img_index = cuda.mem_alloc(pix_num*2)  # int16
     # print("read images and rectfy map: %.3f s" % (time.time() - start_time))
     global_reading_img_time += (time.time() - start_time)
     
     ### prepare gpu data
     start_time = time.time()
     image_num_gray, image_num_phsft = len(images_graycode), len(images_phsft)
-    prj_area_posi_gpu =     cuda.mem_alloc(prj_area_posi.nbytes)
+    is_hdr_images = (prj_area_posi.nbytes != pix_num)
+    prj_area_posi_gpu =     cuda.mem_alloc(prj_area_posi.nbytes) # could be 16 bit HDR images
     prj_area_nega_gpu =     cuda.mem_alloc(prj_area_posi.nbytes)
-    prj_valid_map =         cuda.mem_alloc(prj_area_posi.nbytes)
+    prj_valid_map =         cuda.mem_alloc(pix_num)
     images_gray_src =       cuda.mem_alloc(prj_area_posi.nbytes*image_num_gray)  # np.array(images_graycode)
     images_phsft_src =      cuda.mem_alloc(prj_area_posi.nbytes*image_num_phsft) # np.array(images_phsft)
-    rectified_img_phase =   cuda.mem_alloc(prj_area_posi.nbytes*4) # np.empty_like(prj_area_posi, dtype=np.float32)
-    rectified_belief_map =  cuda.mem_alloc(prj_area_posi.nbytes*2) # np.empty_like(prj_area_posi, dtype=np.int16)
-    sub_pixel_map =         cuda.mem_alloc(prj_area_posi.nbytes*4) # np.empty_like(prj_area_posi, dtype=np.float32)
-    height, width = images_graycode[0].shape[:2]
+    rectified_img_phase =   cuda.mem_alloc(pix_num*4) # np.empty_like(prj_area_posi, dtype=np.float32)
+    rectified_belief_map =  cuda.mem_alloc(pix_num*2) # np.empty_like(prj_area_posi, dtype=np.int16)
+    sub_pixel_map =         cuda.mem_alloc(pix_num*4) # np.empty_like(prj_area_posi, dtype=np.float32)
     cuda.memcpy_htod(prj_area_posi_gpu, prj_area_posi)
     cuda.memcpy_htod(prj_area_nega_gpu, prj_area_nega)
     for i in range(image_num_gray):
@@ -232,7 +248,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
 
     ### decoding
     start_time = time.time()
-    gray_decode_cuda(images_gray_src, prj_area_posi_gpu, prj_area_nega_gpu, prj_valid_map, len(images_graycode), height,width, img_index, phase_decoding_unvalid_thres+1)
+    gray_decode_cuda(images_gray_src, prj_area_posi_gpu, prj_area_nega_gpu, prj_valid_map, len(images_graycode), height,width, img_index, phase_decoding_unvalid_thres+1, is_hdr_images)
     print("graycode decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res and res_path is not None:
         mid_res_corse_gray_index_raw = from_gpu(img_index, size_sample=prj_area_posi, dtype=np.int16) // 2
@@ -240,7 +256,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
         cv2.imwrite(res_path + "/mid_res_corse_gray_index" + appendix, mid_res_corse_gray_index)
   
     start_time = time.time()
-    phase_shift_decode_cuda(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres)
+    phase_shift_decode_cuda(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres, is_hdr_images)
     belief_map = img_index # img_index reused as belief_map when phase_shift_decoding
     print("phase decoding: %.3f s" % (time.time() - start_time))
     if save_mid_res:
