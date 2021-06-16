@@ -514,7 +514,7 @@ __global__ void depth_filter_w(float *depth_map_out, float *depth_map, int *heig
     int width = width_array[0];
     int filter_max_length = depth_filter_max_length[0];
     float filter_thres = depth_filter_unvalid_thres[0];
-    const float filter_weights[5] = {1.0, 0.6, 0.4, 0.2, 0.1};
+    const float filter_weights[5] = {1.0, 0.667, 0.4, 0.2, 0.1};
 
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
     int h = blockIdx.x / 4;
@@ -528,14 +528,12 @@ __global__ void depth_filter_w(float *depth_map_out, float *depth_map, int *heig
             if (!(l_idx > 0 & r_idx < width)) break;
             // if (belief_map[current_pix_idx] >= 1) filter_thres = depth_filter_unvalid_thres[0];
             // else filter_thres = depth_filter_unvalid_thres[0] * 4;
-            else if (depth_map[line_start_addr_offset+l_idx] != 0 & depth_map[line_start_addr_offset+r_idx] != 0 & \
-            abs(depth_map[line_start_addr_offset+l_idx] - curr_pix_value) < filter_thres & abs(depth_map[line_start_addr_offset+r_idx] - curr_pix_value) < filter_thres) {
-
+            if (depth_map[line_start_addr_offset+l_idx] != 0 & abs(depth_map[line_start_addr_offset+l_idx] - curr_pix_value) < filter_thres & \
+                depth_map[line_start_addr_offset+r_idx] != 0 & abs(depth_map[line_start_addr_offset+r_idx] - curr_pix_value) < filter_thres) {
                 left_weight += filter_weights[i];
                 right_weight += filter_weights[i];
                 depth_sum += (depth_map[line_start_addr_offset+r_idx] + depth_map[line_start_addr_offset+l_idx]) * filter_weights[i];
             }
-            else continue;
         }
         depth_map_out[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
     }
@@ -550,7 +548,7 @@ __global__ void depth_filter_h(float *depth_map_out, float *depth_map, int *heig
     int width = width_array[0];
     int filter_max_length = depth_filter_max_length[0];
     float filter_thres = depth_filter_unvalid_thres[0];
-    const float filter_weights[5] = {1.0, 0.6, 0.4, 0.2, 0.1};
+    const float filter_weights[5] = {1.0, 0.667, 0.4, 0.2, 0.1};
 
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
     int h = blockIdx.x / 4;
@@ -561,13 +559,12 @@ __global__ void depth_filter_h(float *depth_map_out, float *depth_map, int *heig
         for (int i=1; i< filter_max_length+1; i++) {
             int l_idx = h-i, r_idx = h+i;
             if (!(l_idx > 0 & r_idx < height)) break;
-            else if (depth_map[l_idx*width+w] != 0 & depth_map[r_idx*width+w] != 0 & \
-                    abs(depth_map[l_idx*width+w] - curr_pix_value) < filter_thres & abs(depth_map[r_idx*width+w] - curr_pix_value) < filter_thres) {
+            if (depth_map[l_idx*width+w] != 0 & abs(depth_map[l_idx*width+w] - curr_pix_value) < filter_thres & \
+                depth_map[r_idx*width+w] != 0 & abs(depth_map[r_idx*width+w] - curr_pix_value) < filter_thres) {
                 left_weight += filter_weights[i];
                 right_weight += filter_weights[i];
                 depth_sum += (depth_map[r_idx*width+w] + depth_map[l_idx*width+w]) * filter_weights[i];
             }
-            else continue;
         }
         depth_map_out[current_pix_idx] = depth_sum / (filter_weights[0] + left_weight + right_weight);
     }
@@ -621,6 +618,45 @@ __global__ void depth_median_filter_h(float *depth_map_out, float *depth_map, in
         }
     }
     depth_map_out[current_pix_idx] = mid_val;
+}
+
+// run one iteration of total variational filter
+// iter_depth_map_out should be copied from depth_map before calling this function
+__global__ void total_variational_filter_one_iter(float *iter_depth_map_out, float *original_depth_map, int *height_array, int *width_array, float *lambda_array)
+{
+    // dt: dt   - time step [0.2]
+    // epsilon: epsilon (of gradient regularization) [1]
+    // lambda: lam  - fidelity term lambda [0]
+    float dt=0.2, epsilon=1.0, lambda=lambda_array[0];  // TODO
+    float ep2 = epsilon * epsilon;
+    
+    int width = width_array[0], height = height_array[0];
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = idx / width, j = idx % width; // h, w
+    
+    int iUp = i - 1, iDown = i + 1;
+    int jLeft = j - 1, jRight = j + 1;
+    // bounds
+    if (0 == i) iUp = i; if (height - 1 == i) iDown = i;
+    if (0 == j) jLeft = j; if (width - 1 == j) jRight = j;
+
+    if (original_depth_map[idx] == 0.0 | 
+        original_depth_map[i*width+jRight] == 0.0 | original_depth_map[i*width+jLeft] == 0.0   |
+        original_depth_map[iDown*width+j] == 0.0  | original_depth_map[iUp*width+j]==0.0       | 
+        original_depth_map[iDown*width+jRight]==0.0 | original_depth_map[iUp*width+jLeft] == 0.0 | 
+        original_depth_map[iUp*width+jRight] == 0.0 | original_depth_map[iDown*width+jLeft] == 0.0)
+        return;
+    
+    float tmp_x = (iter_depth_map_out[i*width+jRight] - iter_depth_map_out[i*width+jLeft]) / 2.0;
+    float tmp_y = (iter_depth_map_out[iDown*width+j] - iter_depth_map_out[iUp*width+j]) / 2.0;
+    float tmp_xx = iter_depth_map_out[i*width+jRight] + iter_depth_map_out[i*width+jLeft] - 2 * iter_depth_map_out[idx];
+    float tmp_yy = iter_depth_map_out[iDown*width+j] + iter_depth_map_out[iUp*width+j] - 2 * iter_depth_map_out[idx];
+    float tmp_xy = (iter_depth_map_out[iDown*width+jRight] + iter_depth_map_out[iUp*width+jLeft] - iter_depth_map_out[iUp*width+jRight] - iter_depth_map_out[iDown*width+jLeft]) / 4.0;
+    float tmp_num = tmp_yy * (tmp_x * tmp_x + ep2) + tmp_xx * (tmp_y * tmp_y + ep2) - 2 * tmp_x * tmp_y * tmp_xy;
+    float tmp_den = powf(tmp_x * tmp_x + tmp_y * tmp_y + ep2, 1.5);
+    float diff = original_depth_map[idx] - iter_depth_map_out[idx];
+    if (abs(diff) > subpix_optimize_unconsis_thres) return;
+    iter_depth_map_out[idx] = iter_depth_map_out[idx] + dt*(tmp_num / tmp_den + lambda*(diff));
 }
 
 __global__ void convert_dmap_to_mili_meter(float *depth_map)

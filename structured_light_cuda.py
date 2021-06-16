@@ -74,6 +74,7 @@ depth_filter_h_cuda_kernel = cuda_module.get_function("depth_filter_h")
 depth_median_filter_w_cuda_kernel = cuda_module.get_function("depth_median_filter_w")
 depth_median_filter_h_cuda_kernel = cuda_module.get_function("depth_median_filter_h")
 optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
+tv_filter_one_iter_cuda_kernel = cuda_module.get_function("total_variational_filter_one_iter")
 convert_dmap_to_mili_meter = cuda_module.get_function("convert_dmap_to_mili_meter")
 
 def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map, image_num, height,width, img_index, unvalid_thres, is_hdr_images):
@@ -128,24 +129,34 @@ def flying_points_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def depth_filter_cuda(depth_map_mid_res, depth_map, height, width, belief_map):
-    depth_filter_w_cuda_kernel(depth_map_mid_res, depth_map,
+    depth_filter_h_cuda_kernel(depth_map_mid_res, depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unconsis_thres)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
-    depth_filter_h_cuda_kernel(depth_map, depth_map_mid_res,
+    depth_filter_w_cuda_kernel(depth_map, depth_map_mid_res,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unconsis_thres)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def depth_median_filter_cuda(depth_map_mid_res, depth_map, height, width):
-    depth_median_filter_w_cuda_kernel(depth_map_mid_res, depth_map,
+    depth_median_filter_h_cuda_kernel(depth_map_mid_res, depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_filter_max_length)),
         block=(width//4, 1, 1), grid=(height*4, 1))
-    depth_median_filter_h_cuda_kernel(depth_map, depth_map_mid_res,
+    depth_median_filter_w_cuda_kernel(depth_map, depth_map_mid_res,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_filter_max_length)),
         block=(width//4, 1, 1), grid=(height*4, 1))
+
+def tv_filter(dedepth_map_mid_res, depth_map, height, width, iter=10):
+    filter_lambda = 0.0
+    cuda.memcpy_dtod(dedepth_map_mid_res, depth_map, size=height*width*4)
+    for _ in range(iter):
+        tv_filter_one_iter_cuda_kernel(dedepth_map_mid_res, depth_map,
+            cuda.In(np.int32(height)), cuda.In(np.int32(width)),
+            cuda.In(np.float32(filter_lambda)),
+            block=(width//4, 1, 1), grid=(height*4, 1))
+    cuda.memcpy_dtod(depth_map, dedepth_map_mid_res, size=height*width*4)
 
 def from_gpu(gpu_data, size_sample, dtype):
     nd_array = np.empty_like(size_sample, dtype)
@@ -329,6 +340,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
         start_time = time.time()
         depth_median_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width)
         depth_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width, belief_map_left)
+        # tv_filter(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width) # not working well yet
         print("depth smothing filter: %.3f s" % (time.time() - start_time))
     # readout
     convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1))
