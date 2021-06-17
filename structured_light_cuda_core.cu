@@ -620,14 +620,14 @@ __global__ void depth_median_filter_h(float *depth_map_out, float *depth_map, in
     depth_map_out[current_pix_idx] = mid_val;
 }
 
-// run one iteration of total variational filter
+// one iteration of total variational filter
 // iter_depth_map_out should be copied from depth_map before calling this function
 __global__ void total_variational_filter_one_iter(float *iter_depth_map_out, float *original_depth_map, int *height_array, int *width_array, float *lambda_array)
 {
     // dt: dt   - time step [0.2]
     // epsilon: epsilon (of gradient regularization) [1]
     // lambda: lam  - fidelity term lambda [0]
-    float dt=0.2, epsilon=1.0, lambda=lambda_array[0];  // TODO
+    float dt=0.2, epsilon=1.0, lambda=lambda_array[0]; // TO tune
     float ep2 = epsilon * epsilon;
     
     int width = width_array[0], height = height_array[0];
@@ -656,7 +656,42 @@ __global__ void total_variational_filter_one_iter(float *iter_depth_map_out, flo
     float tmp_den = powf(tmp_x * tmp_x + tmp_y * tmp_y + ep2, 1.5);
     float diff = original_depth_map[idx] - iter_depth_map_out[idx];
     if (abs(diff) > subpix_optimize_unconsis_thres) return;
-    iter_depth_map_out[idx] = iter_depth_map_out[idx] + dt*(tmp_num / tmp_den + lambda*(diff));
+    iter_depth_map_out[idx] += dt*(tmp_num / tmp_den + lambda*(diff));
+}
+
+//各向异性扩散滤波, Anisotropic Filter, or P-M Filter
+#define anisotropic_filter_fast_impl_without_exp
+__global__ void anisotropic_filter_one_iter(float *iter_depth_map_out, float *iter_depth_map_in, int *height_array, int *width_array, float *kappa_input)
+{
+    float dt=0.25, kappa=kappa_input[0]; // TO tune
+
+    int width = width_array[0], height = height_array[0];
+    int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = idx / width, j = idx % width; // h, w
+    int iUp = i - 1, iDown = i + 1;
+    int jLeft = j - 1, jRight = j + 1;
+    // bounds
+    if (0 == i) iUp = i; if (height - 1 == i) iDown = i;
+    if (0 == j) jLeft = j; if (width - 1 == j) jRight = j;
+
+    float deltaN = iter_depth_map_in[iUp*width+j] - iter_depth_map_in[i*width+j];
+    float deltaS = iter_depth_map_in[iDown*width+j] - iter_depth_map_in[i*width+j];
+    float deltaE = iter_depth_map_in[i*width+jRight] - iter_depth_map_in[i*width+j];
+    float deltaW = iter_depth_map_in[i*width+jLeft] - iter_depth_map_in[i*width+j];
+
+    #ifndef anisotropic_filter_fast_impl_without_exp
+    float cN = expf(-(deltaN / kappa) * (deltaN / kappa));
+    float cS = expf(-(deltaS / kappa) * (deltaS / kappa));
+    float cE = expf(-(deltaE / kappa) * (deltaE / kappa));
+    float cW = expf(-(deltaW / kappa) * (deltaW / kappa));
+    #else
+    float cN = 1.0 / (1 + (deltaN / kappa) * (deltaN / kappa));
+    float cS = 1.0 / (1 + (deltaS / kappa) * (deltaS / kappa));
+    float cE = 1.0 / (1 + (deltaE / kappa) * (deltaE / kappa));
+    float cW = 1.0 / (1 + (deltaW / kappa) * (deltaW / kappa));
+    #endif
+
+    iter_depth_map_out[idx] += dt * (cN * deltaN + cS * deltaS + cE * deltaE + cW * deltaW);
 }
 
 __global__ void convert_dmap_to_mili_meter(float *depth_map)

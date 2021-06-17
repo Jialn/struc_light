@@ -75,6 +75,7 @@ depth_median_filter_w_cuda_kernel = cuda_module.get_function("depth_median_filte
 depth_median_filter_h_cuda_kernel = cuda_module.get_function("depth_median_filter_h")
 optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
 tv_filter_one_iter_cuda_kernel = cuda_module.get_function("total_variational_filter_one_iter")
+anisotropic_filter_one_iter_cuda_kernel = cuda_module.get_function("anisotropic_filter_one_iter")
 convert_dmap_to_mili_meter = cuda_module.get_function("convert_dmap_to_mili_meter")
 
 def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map, image_num, height,width, img_index, unvalid_thres, is_hdr_images):
@@ -157,6 +158,17 @@ def tv_filter(dedepth_map_mid_res, depth_map, height, width, iter=10):
             cuda.In(np.float32(filter_lambda)),
             block=(width//4, 1, 1), grid=(height*4, 1))
     cuda.memcpy_dtod(depth_map, dedepth_map_mid_res, size=height*width*4)
+
+def anisotropic_filter(dedepth_map_mid_res, depth_map, height, width, iter=2):
+    filter_kappa = 0.001
+    cuda.memcpy_dtod(dedepth_map_mid_res, depth_map, size=height*width*4)
+    for _ in range(iter):
+        anisotropic_filter_one_iter_cuda_kernel(dedepth_map_mid_res, depth_map,
+            cuda.In(np.int32(height)), cuda.In(np.int32(width)),
+            cuda.In(np.float32(filter_kappa)),
+            block=(width//4, 1, 1), grid=(height*4, 1))
+        # should copy every iteration for anisotropic_filter
+        cuda.memcpy_dtod(depth_map, dedepth_map_mid_res, size=height*width*4)
 
 def from_gpu(gpu_data, size_sample, dtype):
     nd_array = np.empty_like(size_sample, dtype)
@@ -340,7 +352,8 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
         start_time = time.time()
         depth_median_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width)
         depth_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width, belief_map_left)
-        # tv_filter(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width) # not working well yet
+        # tv_filter(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width) # not works well yet
+        # anisotropic_filter(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width)
         print("depth smothing filter: %.3f s" % (time.time() - start_time))
     # readout
     convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1))
