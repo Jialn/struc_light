@@ -24,7 +24,8 @@ strong_outliers_checking = False    # stronger outliers filter, possiblly remove
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
 flying_points_filter_checking_range = 0.005     # about 5-10 times of resolution per projector pxiel
 flying_points_filter_minmum_points_in_checking_range = 10  # including the point itself, will also add a ratio of width // 300
-use_depth_filter = True                         # a filter that smothing the image while preserves local structure
+use_depth_filter = True                         # a filter that smoothing the image while preserves local structure
+use_anisotropic_filter = True                   # use anisotropic filter or truncked-gaussian blur for depth map smoothing
 depth_filter_max_length = 2                     # from 0 - 6
 depth_filter_unconsis_thres = 0.001
 subpix_optimize_unconsis_thres = 0.002
@@ -160,7 +161,7 @@ def tv_filter(dedepth_map_mid_res, depth_map, height, width, iter=10):
     cuda.memcpy_dtod(depth_map, dedepth_map_mid_res, size=height*width*4)
 
 def anisotropic_filter(dedepth_map_mid_res, depth_map, height, width, iter=2):
-    filter_kappa = 0.001
+    filter_kappa = depth_filter_unconsis_thres # 0.001
     cuda.memcpy_dtod(dedepth_map_mid_res, depth_map, size=height*width*4)
     for _ in range(iter):
         anisotropic_filter_one_iter_cuda_kernel(dedepth_map_mid_res, depth_map,
@@ -351,9 +352,8 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
     if use_depth_filter:
         start_time = time.time()
         depth_median_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width)
-        depth_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width, belief_map_left)
-        # tv_filter(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width) # not works well yet
-        # anisotropic_filter(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width)
+        if use_anisotropic_filter: anisotropic_filter(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width)
+        else: depth_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width, belief_map_left)
         print("depth smothing filter: %.3f s" % (time.time() - start_time))
     # readout
     convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1))

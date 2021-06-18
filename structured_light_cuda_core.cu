@@ -455,7 +455,7 @@ __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optim
 
 // flying points filter
 // a point could be considered as not flying when: points in checking range below max_distance > minmum num
-__global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int *height_array, int *width_array, float *camera_kp, float *depth_filter_max_distance, int *depth_filter_minmum_points_in_checking_range, int *belief_map)
+__global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int *height_array, int *width_array, float *camera_kp, float *depth_filter_max_distance, int *depth_filter_minmum_points_in_checking_range, short *belief_map)
 {
     #define use_fast_distance_checking_for_flying_points_filter // use 3D distance (slower but more precisely) or only distance of axis-z to check flying points
             // enable this will save above 95% time compared with 3D distance checking, while can still remove most of the flying pts.
@@ -485,6 +485,8 @@ __global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int
         checking_range_in_pix_x = min(checking_range_in_pix_x, checking_range_limit);
         checking_range_in_pix_y = min(checking_range_in_pix_y, checking_range_limit);
         int is_not_flying_point_flag = 0;
+        if (belief_map[current_pix_idx] >= 1) max_distance = depth_filter_max_distance[0];
+        else max_distance = depth_filter_max_distance[0] / 2;
         
         for (unsigned int i = max(0, h-checking_range_in_pix_y); i < min(height, h+checking_range_in_pix_y+1); i++) {
             int line_i_offset = i * width;
@@ -527,7 +529,7 @@ __global__ void depth_filter_w(float *depth_map_out, float *depth_map, int *heig
             int l_idx = w-i, r_idx = w+i;
             if (!(l_idx > 0 & r_idx < width)) break;
             // if (belief_map[current_pix_idx] >= 1) filter_thres = depth_filter_unvalid_thres[0];
-            // else filter_thres = depth_filter_unvalid_thres[0] * 4;
+            // else filter_thres = depth_filter_unvalid_thres[0] / 4;
             if (depth_map[line_start_addr_offset+l_idx] != 0 & abs(depth_map[line_start_addr_offset+l_idx] - curr_pix_value) < filter_thres & \
                 depth_map[line_start_addr_offset+r_idx] != 0 & abs(depth_map[line_start_addr_offset+r_idx] - curr_pix_value) < filter_thres) {
                 left_weight += filter_weights[i];
@@ -627,7 +629,7 @@ __global__ void total_variational_filter_one_iter(float *iter_depth_map_out, flo
     // dt: dt   - time step [0.2]
     // epsilon: epsilon (of gradient regularization) [1]
     // lambda: lam  - fidelity term lambda [0]
-    float dt=0.2, epsilon=1.0, lambda=lambda_array[0]; // TO tune
+    float dt=0.2, epsilon=1.0, lambda=lambda_array[0]; //To tune
     float ep2 = epsilon * epsilon;
     
     int width = width_array[0], height = height_array[0];
@@ -663,10 +665,12 @@ __global__ void total_variational_filter_one_iter(float *iter_depth_map_out, flo
 #define anisotropic_filter_fast_impl_without_exp
 __global__ void anisotropic_filter_one_iter(float *iter_depth_map_out, float *iter_depth_map_in, int *height_array, int *width_array, float *kappa_input)
 {
-    float dt=0.25, kappa=kappa_input[0]; // TO tune
+    float dt=0.25, kappa=kappa_input[0];
+    const float unvalid_thres = 0.005; //need tuning
 
     int width = width_array[0], height = height_array[0];
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
+    if (iter_depth_map_in[idx] == 0.0) return;
     int i = idx / width, j = idx % width; // h, w
     int iUp = i - 1, iDown = i + 1;
     int jLeft = j - 1, jRight = j + 1;
@@ -678,6 +682,7 @@ __global__ void anisotropic_filter_one_iter(float *iter_depth_map_out, float *it
     float deltaS = iter_depth_map_in[iDown*width+j] - iter_depth_map_in[i*width+j];
     float deltaE = iter_depth_map_in[i*width+jRight] - iter_depth_map_in[i*width+j];
     float deltaW = iter_depth_map_in[i*width+jLeft] - iter_depth_map_in[i*width+j];
+    if (deltaN >= unvalid_thres | deltaS >= unvalid_thres | deltaE >= unvalid_thres | deltaW >= unvalid_thres) return;
 
     #ifndef anisotropic_filter_fast_impl_without_exp
     float cN = expf(-(deltaN / kappa) * (deltaN / kappa));
@@ -690,7 +695,6 @@ __global__ void anisotropic_filter_one_iter(float *iter_depth_map_out, float *it
     float cE = 1.0 / (1 + (deltaE / kappa) * (deltaE / kappa));
     float cW = 1.0 / (1 + (deltaW / kappa) * (deltaW / kappa));
     #endif
-
     iter_depth_map_out[idx] += dt * (cN * deltaN + cS * deltaS + cE * deltaE + cW * deltaW);
 }
 
