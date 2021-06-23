@@ -156,7 +156,7 @@ def cross_kernel(n):
     return cv2.getStructuringElement(cv2.MORPH_CROSS, (n, n))
 
 def depth_map_post_processing(depth_map, max_depth=3000.0,
-                              use_morphology_closure=False, large_hole_Fill=False, use_median_filter=True):
+                              use_morphology_closure=True, large_hole_Fill=False, use_median_filter=False):
     """Optional fill small holes and additional noise removal that provides better qualitative results.
     Args:
         depth_map: projected depths

@@ -24,10 +24,10 @@ strong_outliers_checking = False    # stronger outliers filter, possiblly remove
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
 flying_points_filter_checking_range = 0.005     # about 5-10 times of resolution per projector pxiel
 flying_points_filter_minmum_points_in_checking_range = 10  # including the point itself, will also add a ratio of width // 300
-use_depth_filter = True                         # a filter that smoothing the image while preserves local structure
-use_anisotropic_filter = True                   # use anisotropic filter or truncked-gaussian blur for depth map smoothing
-depth_filter_max_length = 2                     # from 0 - 6
-depth_filter_unconsis_thres = 0.001
+use_depth_smoothing_filter = True                          # a filter that smoothing the image while preserves local structure
+use_anisotropic_filter = True                              # use anisotropic filter or truncated gaussian-blur for depth map smoothing
+depth_smoothing_filter_max_length = 2                      # from 0 - 6
+depth_smoothing_filter_unconsis_thres = 0.001
 subpix_optimize_unconsis_thres = 0.002
 
 roughly_projector_area_ratio_in_image = None    # the roughly prjector area in image / image width, e.g., 0.5, 0.75, 1.0, 1.25
@@ -40,7 +40,7 @@ save_mid_res_for_visulize = False
 visulize_res = True
 save_pointcloud = False                 # save point cloud for test when visulize_res is enabled
 
-depth_map_post_processing = False       # cpu post processing
+depth_map_post_processing = False       # post processing using CPU, for things like morphology_closure, not very useful
 
 
 ### read and compile cu file
@@ -60,7 +60,8 @@ else:
         cubin_file = f.read()
 cuda_module.module = module_from_buffer(cubin_file)
 cuda_module._bind_module()
-### add cuda funtions
+
+### cuda funtions
 convert_bayer = cuda_module.get_function("convert_bayer_to_gray")
 convert_bayer_blue = cuda_module.get_function("convert_bayer_to_blue")
 gray_decode_cuda_kernel = cuda_module.get_function("gray_decode")
@@ -70,8 +71,8 @@ phase_shift_decode_hdr_cuda_kernel = cuda_module.get_function("phase_shift_decod
 flying_points_filter_cuda_kernel = cuda_module.get_function("flying_points_filter")
 gen_depth_from_index_matching_cuda_kernel = cuda_module.get_function("gen_depth_from_index_matching")
 rectify_phase_and_belief_map_cuda_kernel = cuda_module.get_function("rectify_phase_and_belief_map")
-depth_filter_w_cuda_kernel = cuda_module.get_function("depth_filter_w")
-depth_filter_h_cuda_kernel = cuda_module.get_function("depth_filter_h")
+depth_smoothing_filter_w_cuda_kernel = cuda_module.get_function("depth_smoothing_filter_w")
+depth_smoothing_filter_h_cuda_kernel = cuda_module.get_function("depth_smoothing_filter_h")
 depth_median_filter_w_cuda_kernel = cuda_module.get_function("depth_median_filter_w")
 depth_median_filter_h_cuda_kernel = cuda_module.get_function("depth_median_filter_h")
 optimize_dmap_using_sub_pixel_map_cuda_kernel = cuda_module.get_function("optimize_dmap_using_sub_pixel_map")
@@ -130,24 +131,24 @@ def flying_points_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd
         cuda.In(camera_kd_l), cuda.In(np.float32(flying_points_filter_checking_range)), cuda.In(np.int32(flying_points_filter_minmum_points_in_checking_range)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
-def depth_filter_cuda(depth_map_mid_res, depth_map, height, width, belief_map):
-    depth_filter_h_cuda_kernel(depth_map_mid_res, depth_map,
+def depth_smoothing_filter_cuda(depth_map_mid_res, depth_map, height, width, belief_map):
+    depth_smoothing_filter_h_cuda_kernel(depth_map_mid_res, depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
-        cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unconsis_thres)), belief_map,
+        cuda.In(np.int32(depth_smoothing_filter_max_length)), cuda.In(np.float32(depth_smoothing_filter_unconsis_thres)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
-    depth_filter_w_cuda_kernel(depth_map, depth_map_mid_res,
+    depth_smoothing_filter_w_cuda_kernel(depth_map, depth_map_mid_res,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
-        cuda.In(np.int32(depth_filter_max_length)), cuda.In(np.float32(depth_filter_unconsis_thres)), belief_map,
+        cuda.In(np.int32(depth_smoothing_filter_max_length)), cuda.In(np.float32(depth_smoothing_filter_unconsis_thres)), belief_map,
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def depth_median_filter_cuda(depth_map_mid_res, depth_map, height, width):
     depth_median_filter_h_cuda_kernel(depth_map_mid_res, depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
-        cuda.In(np.int32(depth_filter_max_length)),
+        cuda.In(np.int32(depth_smoothing_filter_max_length)),
         block=(width//4, 1, 1), grid=(height*4, 1))
     depth_median_filter_w_cuda_kernel(depth_map, depth_map_mid_res,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
-        cuda.In(np.int32(depth_filter_max_length)),
+        cuda.In(np.int32(depth_smoothing_filter_max_length)),
         block=(width//4, 1, 1), grid=(height*4, 1))
 
 def tv_filter(dedepth_map_mid_res, depth_map, height, width, iter=10):
@@ -161,7 +162,7 @@ def tv_filter(dedepth_map_mid_res, depth_map, height, width, iter=10):
     cuda.memcpy_dtod(depth_map, dedepth_map_mid_res, size=height*width*4)
 
 def anisotropic_filter(dedepth_map_mid_res, depth_map, height, width, iter=2):
-    filter_kappa = depth_filter_unconsis_thres # 0.001
+    filter_kappa = depth_smoothing_filter_unconsis_thres  # 0.001
     cuda.memcpy_dtod(dedepth_map_mid_res, depth_map, size=height*width*4)
     for _ in range(iter):
         anisotropic_filter_one_iter_cuda_kernel(dedepth_map_mid_res, depth_map,
@@ -339,7 +340,6 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
     # print("alloc mem for maps: %.3f s" % (time.time() - start_time))  # less than 1ms
     ### Infer DepthMap from Index Matching
     start_time = time.time()
-    # depth_median_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_unoptimized_depth_map, height, width)
     gen_depth_from_index_matching_cuda(gpu_unoptimized_depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right, roughly_projector_area_ratio_in_image)
     print("index matching and depth map generating: %.3f s" % (time.time() - start_time))
     start_time = time.time()
@@ -349,11 +349,11 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
     start_time = time.time()
     flying_points_filter_cuda(gpu_depth_map_filtered, gpu_depth_map_raw, height, width, camera_kd_l.astype(np.float32), belief_map_left)
     print("flying point filter: %.3f s" % (time.time() - start_time))
-    if use_depth_filter:
+    if use_depth_smoothing_filter:
         start_time = time.time()
         depth_median_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width)
         if use_anisotropic_filter: anisotropic_filter(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width)
-        else: depth_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width, belief_map_left)
+        else: depth_smoothing_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width, belief_map_left)
         print("depth smothing filter: %.3f s" % (time.time() - start_time))
     # readout
     convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1))

@@ -1,11 +1,12 @@
 
-__global__ void cuda_test(float *dest, float *a, float *b, float *offset) // a simple test function
+// a simple test function
+__global__ void cuda_test(float *dest, float *a, float *b, float *offset) 
 {
     const int idx = threadIdx.x +  blockIdx.x*blockDim.x;
     dest[idx] = a[idx] + b[idx] + offset[0];
 }
 
-// a function to convert RGGB bayer image to single blue channle image
+// a function to convert RGGB bayer image to single blue channle image for stru-light
 __global__ void convert_bayer_to_blue(unsigned char *src, int *height_array, int *width_array)
 {   
     int width = width_array[0], width_half = width_array[0] / 2, height_div2 = height_array[0] / 2;
@@ -24,7 +25,7 @@ __global__ void convert_bayer_to_blue(unsigned char *src, int *height_array, int
     //src[idx+width+1] = src[idx+width+1]; //B
 }
 
-// a function to convert RGGB bayer image to single channle gray image
+// a function to convert RGGB bayer image to single channle gray image for stru-light
 __global__ void convert_bayer_to_gray(unsigned char *src, int *height_array, int *width_array)
 {   
     int width = width_array[0], width_half = width_array[0] / 2, height_div2 = height_array[0] / 2;
@@ -96,7 +97,8 @@ __global__ void convert_bayer_to_gray(unsigned char *src, int *height_array, int
     src[idx_b]  = (r_value[3] + g_value[3] + b_value[3] + 1) / 3;
 }
 
-__global__ void gray_decode(unsigned char *src, unsigned char *avg_thres_posi, unsigned char *avg_thres_nega, unsigned char *valid_map, int *image_num, int *height, int *width, short *img_index, int *unvalid_thres)
+__global__ void gray_decode(unsigned char *src, unsigned char *avg_thres_posi, unsigned char *avg_thres_nega, unsigned char *valid_map, int *image_num,
+    int *height, int *width, short *img_index, int *unvalid_thres)
 {
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     bool pix_is_valid = ((int)avg_thres_posi[idx] - (int)avg_thres_nega[idx]) > unvalid_thres[0];
@@ -105,7 +107,7 @@ __global__ void gray_decode(unsigned char *src, unsigned char *avg_thres_posi, u
         img_index[idx] = -1;
         return;
     }
-    int avg_thres = avg_thres_posi[idx]/2 + avg_thres_nega[idx]/2;
+    int avg_thres = ((int)avg_thres_posi[idx] + (int)avg_thres_nega[idx] + 1) / 2;
     int bin_code = 0;
     int current_bin_code_bit = 0;
     for (unsigned int i = 0; i < image_num[0]; i++) {
@@ -121,7 +123,9 @@ __global__ void gray_decode(unsigned char *src, unsigned char *avg_thres_posi, u
     img_index[idx] = bin_code;
 }
 
-__global__ void gray_decode_hdr(unsigned short *src, unsigned short *avg_thres_posi, unsigned short *avg_thres_nega, unsigned char *valid_map, int *image_num, int *height, int *width, short *img_index, int *unvalid_thres)
+// 16bit version of gray_decode
+__global__ void gray_decode_hdr(unsigned short *src, unsigned short *avg_thres_posi, unsigned short *avg_thres_nega, unsigned char *valid_map,
+    int *image_num, int *height, int *width, short *img_index, int *unvalid_thres)
 {
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     bool pix_is_valid = ((int)avg_thres_posi[idx] - (int)avg_thres_nega[idx]) > unvalid_thres[0];
@@ -130,7 +134,7 @@ __global__ void gray_decode_hdr(unsigned short *src, unsigned short *avg_thres_p
         img_index[idx] = -1;
         return;
     }
-    int avg_thres = avg_thres_posi[idx]/2 + avg_thres_nega[idx]/2;
+    int avg_thres = ((int)avg_thres_posi[idx] + (int)avg_thres_nega[idx] + 1) / 2;
     int bin_code = 0;
     int current_bin_code_bit = 0;
     for (unsigned int i = 0; i < image_num[0]; i++) {
@@ -147,11 +151,13 @@ __global__ void gray_decode_hdr(unsigned short *src, unsigned short *avg_thres_p
 }
 
 #define PI 3.14159265358979
-__global__ void phase_shift_decode(unsigned char *src, int *height, int *width, float *img_phase, short *img_index, int *unvalid_thres, float *phsift_pattern_period_per_pixel_array)
+// #define gamma_linear_correction_for_phsft_decode
+__global__ void phase_shift_decode(unsigned char *src, int *height, int *width, float *img_phase, short *img_index,
+    int *unvalid_thres, float *phsift_pattern_period_per_pixel_array)
 {
     float phsift_pattern_period_per_pixel = phsift_pattern_period_per_pixel_array[0];
     float unvalid_thres_diff = unvalid_thres[0];
-    float outliers_checking_diff_thres = 10.0 + unvalid_thres_diff; //above this, will skip outlier checking
+    float outliers_checking_diff_thres = 10.0 + unvalid_thres_diff; //above this, will skip outlier re-check when matching
 
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     if (img_index[idx] == -1) {
@@ -161,30 +167,41 @@ __global__ void phase_shift_decode(unsigned char *src, int *height, int *width, 
     }
     float i1 = src[idx], i2 = src[idx + height[0] * width[0]];
     float i3 = src[idx + 2 * height[0] * width[0]], i4 = src[idx + 3 * height[0] * width[0]];
+    // the gray value diff of inv pattern(phaseshift is pi) can be seen as belief_value
     int belief_value = abs(i4 - i2) + abs(i3 - i1);
-    bool unvalid_flag = (belief_value <= unvalid_thres_diff); //(abs(i4 - i2) <= unvalid_thres_diff & abs(i3 - i1) <= unvalid_thres_diff);
+    bool unvalid_flag = (belief_value <= unvalid_thres_diff);
     if (unvalid_flag) {
         img_phase[idx] = nanf("");
         img_index[idx] = 0;
         return;
     }
+    #ifdef gamma_linear_correction_for_phsft_decode
+    float gamma_correction = 2.4;
+    float i1_c = powf(i1, gamma_correction);
+    float i2_c = powf(i2, gamma_correction);
+    float i3_c = powf(i3, gamma_correction);
+    float i4_c = powf(i4, gamma_correction);
+    float phase = - atan2f(i4_c-i2_c, i3_c-i1_c) + PI;
+    #else
     float phase = - atan2f(i4-i2, i3-i1) + PI;
+    #endif
     int phase_main_index = img_index[idx] / 2 ;
     int phase_sub_index = img_index[idx] & 0x01;
     if((phase_sub_index == 0) & (phase > PI*1.5))  phase -= 2.0*PI; 
     if((phase_sub_index == 1) & (phase < PI*0.5))  phase += 2.0*PI; 
     img_phase[idx] = phase_main_index * phsift_pattern_period_per_pixel + (phase * phsift_pattern_period_per_pixel / (2*PI));
     //reuse img_index as belief map
-    bool need_outliers_checking_flag = (belief_value <= outliers_checking_diff_thres); //(abs(i4 - i2) <= outliers_checking_diff_thres & abs(i3 - i1) <= outliers_checking_diff_thres);
-    if (need_outliers_checking_flag) img_index[idx] = 0;
+    bool need_outliers_checking_flag = (belief_value <= outliers_checking_diff_thres);
+    if (need_outliers_checking_flag) img_index[idx] = 0;  // can not trust
     else img_index[idx] = belief_value;
 }
 
+// 16bit version of phase_shift_decode
 __global__ void phase_shift_decode_hdr(unsigned short *src, int *height, int *width, float *img_phase, short *img_index, int *unvalid_thres, float *phsift_pattern_period_per_pixel_array)
 {
     float phsift_pattern_period_per_pixel = phsift_pattern_period_per_pixel_array[0];
     float unvalid_thres_diff = unvalid_thres[0];
-    float outliers_checking_diff_thres = 10.0 + unvalid_thres_diff; //above this, will skip outlier checking
+    float outliers_checking_diff_thres = 10.0 + unvalid_thres_diff; //above this, will skip outlier re-check when matching
     float gamma_correction = 2.0;
 
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
@@ -196,7 +213,7 @@ __global__ void phase_shift_decode_hdr(unsigned short *src, int *height, int *wi
     float i1 = src[idx], i2 = src[idx + height[0] * width[0]];
     float i3 = src[idx + 2 * height[0] * width[0]], i4 = src[idx + 3 * height[0] * width[0]];
     int belief_value = abs(i4 - i2) + abs(i3 - i1);
-    bool unvalid_flag = (belief_value <= unvalid_thres_diff); //(abs(i4 - i2) <= unvalid_thres_diff & abs(i3 - i1) <= unvalid_thres_diff);
+    bool unvalid_flag = (belief_value <= unvalid_thres_diff);
     if (unvalid_flag) {
         img_phase[idx] = nanf("");
         img_index[idx] = 0;
@@ -213,14 +230,14 @@ __global__ void phase_shift_decode_hdr(unsigned short *src, int *height, int *wi
     if((phase_sub_index == 1) & (phase < PI*0.5))  phase += 2.0*PI; 
     img_phase[idx] = phase_main_index * phsift_pattern_period_per_pixel + (phase * phsift_pattern_period_per_pixel / (2*PI));
     //reuse img_index as belief map
-    bool need_outliers_checking_flag = (belief_value <= outliers_checking_diff_thres); //(abs(i4 - i2) <= outliers_checking_diff_thres & abs(i3 - i1) <= outliers_checking_diff_thres);
+    bool need_outliers_checking_flag = (belief_value <= outliers_checking_diff_thres);
     if (need_outliers_checking_flag) img_index[idx] = 0;
     else img_index[idx] = belief_value;
 }
 
+#define use_interpo_for_y_aixs
 __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, float *rectify_map_x, float *rectify_map_y, int *height_array, int *width_array, float *rectified_img_phase, short *rectified_bfmap, float *sub_pixel_map_x)
 {
-    const bool use_interpo_for_y_aixs = true;
     int width = width_array[0], height = height_array[0];
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     int w = idx % width;
@@ -228,7 +245,7 @@ __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, flo
     int round_y = int(src_y+0.499999), round_x = int(src_x+0.499999);
     int src_pix_idx = round_y*width + round_x;
 
-    if (use_interpo_for_y_aixs) {
+    #ifdef use_interpo_for_y_aixs
         int src_y_int = int(src_y);
         if (src_y_int == height-1) src_y_int = height - 2;
         float upper = img_phase[src_y_int*width+round_x];
@@ -236,13 +253,16 @@ __global__ void rectify_phase_and_belief_map(float *img_phase, short *bfmap, flo
         float diff = lower - upper;
         if ( abs(diff) >= 1.0 | isnan(diff)) rectified_img_phase[idx] = img_phase[src_pix_idx];
         else rectified_img_phase[idx] = upper + diff * (src_y-src_y_int);
-    }
-    else rectified_img_phase[idx] = img_phase[src_pix_idx];
+    #else
+        rectified_img_phase[idx] = img_phase[src_pix_idx];
+    #endif
     rectified_bfmap[idx] = bfmap[src_pix_idx];
     sub_pixel_map_x[idx] = w + (round_x - src_x);
 }
 
-__device__ __forceinline__ void pix_index_matching(float *line_l, float *line_r, int w, int curr_pix_idx, int i, int line_start_addr_offset, float thres, short *belief_map_l, short *belief_map_r, int *most_corres_pts_l, int *most_corres_pts_r, int *most_corres_pts_l_bf, int *most_corres_pts_r_bf, int *cnt_l, int *cnt_r, float *average_corres_position_in_thres_l, float *average_corres_position_in_thres_r)
+__device__ __forceinline__ void pix_index_matching(float *line_l, float *line_r, int w, int curr_pix_idx, int i, int line_start_addr_offset,
+    float thres, short *belief_map_l, short *belief_map_r, int *most_corres_pts_l, int *most_corres_pts_r, int *most_corres_pts_l_bf,
+    int *most_corres_pts_r_bf, int *cnt_l, int *cnt_r, float *average_corres_position_in_thres_l, float *average_corres_position_in_thres_r)
 {
     if ((line_l[w]-thres <= line_r[i]) & (line_r[i] <= line_l[w])) {
         if (*most_corres_pts_l==-1) *most_corres_pts_l = i;
@@ -388,7 +408,7 @@ __global__ void gen_depth_from_index_matching(float *depth_map, int *height_arra
 __global__ void optimize_dmap_using_sub_pixel_map(float *depth_map, float *optimized_depth_map, int *height_array, int *width_array, float *img_index_left_sub_px)
 {
     // interpo for depth map using sub-pixel map
-    // this does not improve a lot on rendered data because no distortion and less stereo rectify for left camera, but very useful for real captures
+    // this does not improve a lot on rendered datasets because no distortion and less stereo rectify for left camera, but very useful for real captures
     int width = width_array[0];
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
     int w = current_pix_idx % width;
@@ -511,7 +531,8 @@ __global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int
     }
 }
 
-__global__ void depth_filter_w(float *depth_map_out, float *depth_map, int *height_array, int *width_array, int *depth_filter_max_length, float *depth_filter_unvalid_thres, short *belief_map)
+// truncated smoothing filter for depth map
+__global__ void depth_smoothing_filter_w(float *depth_map_out, float *depth_map, int *height_array, int *width_array, int *depth_filter_max_length, float *depth_filter_unvalid_thres, short *belief_map)
 {
     int width = width_array[0];
     int filter_max_length = depth_filter_max_length[0];
@@ -544,7 +565,7 @@ __global__ void depth_filter_w(float *depth_map_out, float *depth_map, int *heig
     }
 }
 
-__global__ void depth_filter_h(float *depth_map_out, float *depth_map, int *height_array, int *width_array, int *depth_filter_max_length, float *depth_filter_unvalid_thres, short *belief_map)
+__global__ void depth_smoothing_filter_h(float *depth_map_out, float *depth_map, int *height_array, int *width_array, int *depth_filter_max_length, float *depth_filter_unvalid_thres, short *belief_map)
 {
     int height = height_array[0];
     int width = width_array[0];
@@ -575,7 +596,7 @@ __global__ void depth_filter_h(float *depth_map_out, float *depth_map, int *heig
     }
 }
 
-__device__ __forceinline__ float get_mid(float a, float b, float c)
+__device__ __forceinline__ float get_mid_val(float a, float b, float c)
 {
     float max=a, min=a;
     if (b > max) max = b;
@@ -598,7 +619,7 @@ __global__ void depth_median_filter_w(float *depth_map_out, float *depth_map, in
     float mid_val = curr_pix_value;
     if (curr_pix_value != 0 & h != 0 & h!= height-1 & w !=0 & w != width-1) {
         if(depth_map[current_pix_idx-1] != 0 & depth_map[current_pix_idx+1] != 0) {
-            mid_val = get_mid(depth_map[current_pix_idx-1], depth_map[current_pix_idx], depth_map[current_pix_idx+1]);
+            mid_val = get_mid_val(depth_map[current_pix_idx-1], depth_map[current_pix_idx], depth_map[current_pix_idx+1]);
         }
     }
     depth_map_out[current_pix_idx] = mid_val;
@@ -616,7 +637,7 @@ __global__ void depth_median_filter_h(float *depth_map_out, float *depth_map, in
     float mid_val = curr_pix_value;
     if (curr_pix_value != 0 & h != 0 & h!= height-1 & w !=0 & w != width-1) {
         if(depth_map[current_pix_idx-width] != 0 & depth_map[current_pix_idx+width] != 0) {
-            mid_val = get_mid(depth_map[current_pix_idx-width], depth_map[current_pix_idx], depth_map[current_pix_idx+width]);
+            mid_val = get_mid_val(depth_map[current_pix_idx-width], depth_map[current_pix_idx], depth_map[current_pix_idx+width]);
         }
     }
     depth_map_out[current_pix_idx] = mid_val;
@@ -661,7 +682,7 @@ __global__ void total_variational_filter_one_iter(float *iter_depth_map_out, flo
     iter_depth_map_out[idx] += dt*(tmp_num / tmp_den + lambda*(diff));
 }
 
-//各向异性扩散滤波, Anisotropic Filter, or P-M Filter
+// Anisotropic Filter, or P-M Filter, 各向异性扩散滤波 
 #define anisotropic_filter_fast_impl_without_exp
 __global__ void anisotropic_filter_one_iter(float *iter_depth_map_out, float *iter_depth_map_in, int *height_array, int *width_array, float *kappa_input)
 {

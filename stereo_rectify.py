@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 
 class StereoRectify():
-    """ Class for Stereo undistor and Rectify, with scale
+    """ Class for Stereo undistor and Rectify, with optional scale
     """
 
     def __init__(self,
@@ -10,14 +10,14 @@ class StereoRectify():
                  cali_file):
         """
         Args:
-            scale(float or None): scale of image
+            scale(float or None): scale of image applied to rectiy map
             cali_file: path to calibar yml file. e.g., "./temp/binanry_test/cali_stereo.yml"
         """
         if scale is None:
             self.scale = 1.0
         else:
             self.scale = scale
-        # read yml data
+        # read calibra yml data
         infile = cv2.FileStorage(cali_file, cv2.FILE_STORAGE_READ)
         self.cameraMatrixL = infile.getNode("K1").mat()
         self.cameraMatrixR = infile.getNode("K2").mat()
@@ -48,13 +48,13 @@ class StereoRectify():
                 self.cameraMatrixL, self.distCoeffsL, self.cameraMatrixR, self.distCoeffsR, (org_w, org_h), self.R, self.T, flags=0, alpha=-1) # cv2.CALIB_ZERO_DISPARITY
             self.R1, self.R2 = R1, R2
             self.P1, self.P2 = P1, P2
-            # undistort images map
+            # generate undistort images map
             remap_x_left, remap_y_left = cv2.initUndistortRectifyMap(self.cameraMatrixL, self.distCoeffsL, R1, P1, (org_w, org_h), cv2.CV_32FC1)
             remap_x_right, remap_y_right = cv2.initUndistortRectifyMap(self.cameraMatrixR, self.distCoeffsR, R2, P2, (org_w, org_h), cv2.CV_32FC1)
 
             def scale_map(img_map):
                 return cv2.resize(img_map*self.scale, (w, h), interpolation=interpolation)
-
+            # scale and clip the map
             self.remap_x_left_scaled, self.remap_y_left_scaled = scale_map(remap_x_left), scale_map(remap_y_left)
             self.remap_x_right_scaled, self.remap_y_right_scaled = scale_map(remap_x_right), scale_map(remap_y_right)
             self.remap_x_left_scaled = np.clip(self.remap_x_left_scaled, 0.0, w-1)
