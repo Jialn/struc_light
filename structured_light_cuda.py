@@ -46,7 +46,7 @@ depth_map_post_processing = False       # post processing using CPU, for things 
 ### read and compile cu file
 dir_path = os.path.dirname(os.path.realpath(__file__))  # dir of this file
 cuda_module = CudaModule()
-if os.path.exists(dir_path + "/structured_light_cuda_core.cu"):
+if __name__ == "__main__" and os.path.exists(dir_path + "/structured_light_cuda_core.cu"):
     with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
         cuda_src_string = f.read()
     cuda_src_string = "#define subpix_optimize_unconsis_thres " + str(subpix_optimize_unconsis_thres) + cuda_src_string
@@ -216,7 +216,7 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
 
     height, width = prj_area_posi.shape[:2]
     pix_num = height * width
-    if rectifier.remap_x_left_scaled is None: # to build the internal LUT map
+    if gpu_remap_x_left is None: # to build the internal LUT map
         _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)
         rectify_map_x_left, rectify_map_y_left, camera_kd_left = rectifier.remap_x_left_scaled, rectifier.remap_y_left_scaled, rectifier.rectified_camera_kd_l
         rectify_map_x_right, rectify_map_y_right, camera_kd_right = rectifier.remap_x_right_scaled, rectifier.remap_y_right_scaled, rectifier.rectified_camera_kd_r
