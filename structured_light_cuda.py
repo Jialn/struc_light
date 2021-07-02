@@ -47,7 +47,7 @@ depth_map_post_processing = False       # post processing using CPU, for things 
 dir_path = os.path.dirname(os.path.realpath(__file__))  # dir of this file
 cuda_module = CudaModule()
 if __name__ == "__main__" and os.path.exists(dir_path + "/structured_light_cuda_core.cu"):
-    with open(dir_path + "/structured_light_cuda_core.cu", "r") as f:
+    with open(dir_path + "/structured_light_cuda_core.cu", "r", encoding='utf-8-sig') as f:
         cuda_src_string = f.read()
     cuda_src_string = "#define subpix_optimize_unconsis_thres " + str(subpix_optimize_unconsis_thres) + cuda_src_string
     if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
