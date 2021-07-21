@@ -43,21 +43,29 @@ save_pointcloud = False                 # save point cloud for test when visuliz
 depth_map_post_processing = False       # post processing using CPU, for things like morphology_closure, not very useful
 
 
-### read and compile cu file
+### compile cu file if needed
 dir_path = os.path.dirname(os.path.realpath(__file__))  # dir of this file
 cuda_module = CudaModule()
 if __name__ == "__main__" and os.path.exists(dir_path + "/structured_light_cuda_core.cu"):
-    with open(dir_path + "/structured_light_cuda_core.cu", "r", encoding='utf-8-sig') as f:
-        cuda_src_string = f.read()
-    cuda_src_string = "#define subpix_optimize_unconsis_thres " + str(subpix_optimize_unconsis_thres) + cuda_src_string
-    if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
-    if strong_outliers_checking: cuda_src_string = "#define strong_outliers_checking true\n" + cuda_src_string
-    cubin_file = pycuda.compiler.compile(cuda_src_string, nvcc="nvcc", options=None, keep=False, no_extern_c=False, arch=None, code=None, cache_dir=None, include_dirs=[])
-    with open(dir_path + "/structured_light_cuda_core.cubin", "wb") as f:
-        f.write(cubin_file)
-else:
-    with open(dir_path + "/structured_light_cuda_core.cubin", "rb") as f:
-        cubin_file = f.read()
+    compile_flag = False
+    if not os.path.exists(dir_path + "/structured_light_cuda_core.cubin"):
+        compile_flag = True
+    elif os.stat(dir_path + "/structured_light_cuda_core.cu").st_mtime > os.stat(dir_path + "/structured_light_cuda_core.cubin").st_mtime:
+        compile_flag = True
+    if compile_flag:
+        print("compiling cu file")
+        with open(dir_path + "/structured_light_cuda_core.cu", "r", encoding='utf-8-sig') as f:
+            cuda_src_string = f.read()
+        cuda_src_string = "#define subpix_optimize_unconsis_thres " + str(subpix_optimize_unconsis_thres) + cuda_src_string
+        if use_belief_map_for_checking: cuda_src_string = "#define use_belief_map_for_checking\n" + cuda_src_string
+        if strong_outliers_checking: cuda_src_string = "#define strong_outliers_checking true\n" + cuda_src_string
+        cubin_file = pycuda.compiler.compile(cuda_src_string, nvcc="nvcc", options=None, keep=False, no_extern_c=False, arch=None, code=None, cache_dir=None, include_dirs=[])
+        with open(dir_path + "/structured_light_cuda_core.cubin", "wb") as f:
+            f.write(cubin_file)
+
+### read compiled cu file
+with open(dir_path + "/structured_light_cuda_core.cubin", "rb") as f:
+    cubin_file = f.read()
 cuda_module.module = module_from_buffer(cubin_file)
 cuda_module._bind_module()
 
