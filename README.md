@@ -10,10 +10,12 @@ Tested on ubuntu18.04 + python3.6 + cuda10.2 and win10 + python3.8 + cuda11
 ## Running examples
   ```
   python3 structured_light.py pattern_examples\struli_test1\
+  python3 structured_light_cuda.py pattern_examples\struli_test1\
   ```
   or on linux:
   ```
   python3 structured_light.py pattern_examples/struli_test1/
+  python3 structured_light_cuda.py pattern_examples/struli_test1/
   ```
 
   Result is in ".\pattern_examples\struli_test1\res". You can use meshlab to visualize the ply file. https://www.meshlab.net/#download
