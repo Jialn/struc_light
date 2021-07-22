@@ -429,11 +429,13 @@ if __name__ == "__main__":
     if visulize_res:
         cv2.imshow("depth", utils.convert_depth_to_color(depth_map_mm, scale=None))
         if (sys.platform != 'win32'): cv2.waitKey(50)
+        else: cv2.waitKey(1000)
         import open3d as o3d
         fx, fy, cx, cy = camera_kp[0][0], camera_kp[1][1], camera_kp[0][2], camera_kp[1][2]
         if os.path.exists(image_path + "color.bmp"): gray = cv2.imread(image_path + "color.bmp")
         pcd = utils.gen_point_clouds_from_images(depth_map_mm, camera_kp, gray, save_path=res_path if save_pointcloud else None)
         pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         pcd.translate(np.zeros(3), relative=False)
+        cv2.destroyAllWindows()
         o3d.visualization.draw(geometry=pcd, width=1800, height=1000, point_size=1,
             bg_color=(0.5, 0.5, 0.5, 0.5), show_ui=True)

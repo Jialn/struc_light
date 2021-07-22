@@ -9,11 +9,11 @@ __global__ void cuda_test(float *dest, float *a, float *b, float *offset)
 // a function to convert RGGB bayer image to single blue channle image for stru-light
 __global__ void convert_bayer_to_blue(unsigned char *src, int *height_array, int *width_array)
 {   
-    int width = width_array[0], width_half = width_array[0] / 2, height_div2 = height_array[0] / 2;
-    int idx_div4 = threadIdx.x + blockIdx.x*blockDim.x;
-    int h_div2 = idx_div4 / width_half, w_div2 = idx_div4 % width_half;
+    int width = width_array[0], half_width = width_array[0] / 2, half_height = height_array[0] / 2;
+    int idx_div4 = threadIdx.x + blockIdx.x*blockDim.x; // the index of pix / 4, one thread deal with 4 pixels
+    int h_div2 = idx_div4 / half_width, w_div2 = idx_div4 % half_width;
     int idx = h_div2 * 2 * width + w_div2 * 2;
-    if (h_div2 % height_div2 != 0) {    // if not the first line
+    if (h_div2 % half_height != 0) {    // if not the first 2 lines
         src[idx] = ((int)src[idx-width-1] + (int)src[idx-width+1] + (int)src[idx+width-1] + (int)src[idx+width+1]+2) / 4;  // R
         src[idx+1] = ((int)src[idx-width+1] + (int)src[idx+width+1]+1) /2;  //G
     }
@@ -28,18 +28,18 @@ __global__ void convert_bayer_to_blue(unsigned char *src, int *height_array, int
 // a function to convert RGGB bayer image to single channle gray image for stru-light
 __global__ void convert_bayer_to_gray(unsigned char *src, int *height_array, int *width_array)
 {   
-    int width = width_array[0], width_half = width_array[0] / 2, height_div2 = height_array[0] / 2;
-    int idx_div4 = threadIdx.x + blockIdx.x*blockDim.x;
-    int h_div2 = idx_div4 / width_half, w_div2 = idx_div4 % width_half;
+    int width = width_array[0], half_width = width_array[0] / 2, half_height = height_array[0] / 2;
+    int idx_div4 = threadIdx.x + blockIdx.x*blockDim.x; // the index of pix / 4, one thread deal with 4 pixels
+    int h_div2 = idx_div4 / half_width, w_div2 = idx_div4 % half_width; // h_div2 -> r|g or g2|b; w_div2 -> r or g2 |g or b
     int idx = h_div2 * 2 * width + w_div2 * 2;
-    int r_value[4], b_value[4], g_value[4];
     int idx_r=idx, idx_g=idx+1, idx_g2=idx+width, idx_b=idx+width+1;
-    if (h_div2 % height_div2 == 0) {    // if the first line
+    int r_value[4], b_value[4], g_value[4];
+    if (h_div2 % half_height == 0) {    // if the first 2 lines
         // R
         r_value[0] = src[idx];
-        b_value[0] = ((int)src[idx+width-1] + (int)src[idx+width+1]+1) / 2;
-        if (w_div2 == 0) g_value[0] = ((int)src[idx+1] + (int)src[idx+width] + 1) / 2;
+        if (w_div2 == 0) g_value[0] = ((int)src[idx+1] + (int)src[idx+width] + 1) / 2;  // if the first 2 cols
         else g_value[0] = ((int)src[idx-1] + (int)src[idx+1] + (int)src[idx+width] + 1) / 3;
+        b_value[0] = ((int)src[idx+width-1] + (int)src[idx+width+1]+1) / 2;
         // G
         r_value[1] = ((int)src[idx_g-1] + (int)src[idx_g+1] + 1) / 2;
         g_value[1] = src[idx_g];
@@ -53,12 +53,11 @@ __global__ void convert_bayer_to_gray(unsigned char *src, int *height_array, int
         g_value[3] = ((int)src[idx_b+width] + (int)src[idx_b-1] + (int)src[idx_b+1] + 2) / 3;
         b_value[3] = src[idx_b];
     }
-    else if (h_div2 % height_div2 == height_div2-1) {   // if the last line
+    else if (h_div2 % half_height == half_height-1) {   // if the last 2 lines
         // R
         r_value[0] = src[idx];
         g_value[0] = ((int)src[idx-width] + (int)src[idx-1] + (int)src[idx+1] + 1) / 3;
-        if (w_div2 == width_half-1) b_value[0] = src[idx-width-1];
-        else b_value[0] = ((int)src[idx-width-1] + (int)src[idx-width+1] + 1) / 2;
+        b_value[0] = ((int)src[idx-width-1] + (int)src[idx-width+1] + (int)src[idx+width-1] + (int)src[idx+width+1] + 2) / 4;
         // G
         r_value[1] = ((int)src[idx_g-1] + (int)src[idx_g+1] + 1) / 2;
         g_value[1] = src[idx_g];
@@ -66,12 +65,12 @@ __global__ void convert_bayer_to_gray(unsigned char *src, int *height_array, int
         // G
         r_value[2] = src[idx_g2-width];
         g_value[2] = src[idx_g2];
-        b_value[2] = ((int)src[idx_g2-1] + (int)src[idx_g2+1] + 1) /2;
+        b_value[2] = ((int)src[idx_g2-1] + (int)src[idx_g2+1] + 1) / 2;
         // B
         r_value[3] = ((int)src[idx_b-width-1] + (int)src[idx_b-width+1] + 1) / 2;
-        g_value[3] = ((int)src[idx_b-width] + (int)src[idx_b-1] + (int)src[idx_b+1] + 2) / 4;
+        if (w_div2 == half_width-1) g_value[3] = ((int)src[idx_b-width] + (int)src[idx_b-1] + 1) / 2;  // if the last 2 cols
+        else g_value[3] = ((int)src[idx_b-width] + (int)src[idx_b-1] + (int)src[idx_b+1] + 1) / 3;
         b_value[3] = src[idx_b];
-
     }
     else {
         // R
