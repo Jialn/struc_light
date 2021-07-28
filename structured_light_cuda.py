@@ -22,10 +22,11 @@ use_belief_map_for_checking = True  # use enhanced matching with belief_map, giv
 strong_outliers_checking = False    # stronger outliers filter, possiblly remove pts not outliers. use with caution
                                     # this option is not working when using pre-built cuda binaries beacuse it's set before compiling
 depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
-flying_points_filter_checking_range = 0.005     # about 5-10 times of resolution per projector pxiel
+flying_points_filter_checking_range = 0.005     # define the threshod for neighbour when checking for flying points
+                                                # empirically, about 5-10 times of resolution per pxiel
 flying_points_filter_minmum_points_in_checking_range = 10  # including the point itself, will also add a ratio of width // 300
 use_depth_smoothing_filter = True                          # a filter that smoothing the image while preserves local structure
-use_anisotropic_filter = True                              # use anisotropic filter or truncated gaussian-blur for depth map smoothing
+use_anisotropic_filter = True                              # use anisotropic filter(True) or truncated gaussian-blur(False) for depth map smoothing
 depth_smoothing_filter_max_length = 2                      # from 0 - 6
 depth_smoothing_filter_unconsis_thres = 0.001
 subpix_optimize_unconsis_thres = 0.002
@@ -38,7 +39,7 @@ default_image_seq_start_index = 24      # in some datasets, (0, 24) are for pure
 
 save_mid_res_for_visulize = False
 visulize_res = True
-save_pointcloud = False                 # save point cloud for test when visulize_res is enabled
+save_pointcloud = True                 # save point cloud for test when visulize_res is enabled
 
 depth_map_post_processing = False       # post processing using CPU, for things like morphology_closure, not very useful
 
@@ -413,6 +414,9 @@ if __name__ == "__main__":
     
     rectifier = StereoRectify(scale=1.0, cali_file=image_path+'calib.yml')
     gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
+    cv2.imwrite(res_path + "/gray.bmp", gray)
+    cv2.imwrite(res_path + "/depth.exr", depth_map_mm)
+    np.savetxt(res_path + "/camera_kd.txt", camera_kp)
     if not save_mid_res_for_visulize:  # test again for speed of not inital case
         gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
     
