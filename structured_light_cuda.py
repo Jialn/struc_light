@@ -21,7 +21,7 @@ phase_decoding_unvalid_thres = 2    # if the diff of pixel in an inversed patter
 use_belief_map_for_checking = True  # use enhanced matching with belief_map, gives more robust matching result, but a little bit slower;
 strong_outliers_checking = False    # stronger outliers filter, possiblly remove pts not outliers. use with caution
                                     # this option is not working when using pre-built cuda binaries beacuse it's set before compiling
-depth_cutoff_near, depth_cutoff_far = 0.1, 2.0  # depth cutoff
+depth_cutoff_near, depth_cutoff_far = 0.1, 10.0  # depth cutoff
 flying_points_filter_checking_range = 0.005     # define the threshod for neighbour when checking for flying points
                                                 # empirically, about 5-10 times of resolution per pxiel
 flying_points_filter_minmum_points_in_checking_range = 10  # including the point itself, will also add a ratio of width // 300

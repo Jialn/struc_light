@@ -4,3 +4,5 @@ __pycache__
 temp
 pattern_examples/*
 structured_light_cuda_core.cubin
+*.pyd
+build
