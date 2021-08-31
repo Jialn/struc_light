@@ -12,6 +12,8 @@ Tested on ubuntu18.04 + python3.6 + cuda10.2 and win10 + python3.8 + cuda11
     安装VS2019完毕后需要添加"cl.exe"的环境变量，示例: `C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\Hostx64\x64`
 
 - 下载安装CUDA11.4：https://developer.nvidia.com/cuda-downloads
+    注意更换显卡或CUDA版本后需要将*.cubin文件删除，下次运行时会自动重新编译
+
 - 通过Pip安装packages
   ```
   pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
