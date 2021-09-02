@@ -20,6 +20,14 @@ Tested on ubuntu18.04 + python3.6 + cuda10.2 and win10 + python3.8 + cuda11
   pip install numpy opencv-python pyserial hidapi open3d pycuda
   ```
 
+- 输出编译好的库:
+  把x3d_camera放置在跟本repo相同的目录下，然后运行
+  ```
+  python setup.py build_ext --inplace
+  ```
+  会输出编译好的库到x3d_camera，Win下是pyd文件，linux下是so文件
+
+
 ## Running examples
   Windows:
   ```
