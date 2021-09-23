@@ -491,7 +491,7 @@ __global__ void flying_points_filter(float *depth_map, float *depth_map_raw, int
     float cy = camera_kp[1*3+2];
 
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int h = blockIdx.x / 4;
+    int h = current_pix_idx / width;
     int w = current_pix_idx % width;
     float curr_pix_value = depth_map_raw[current_pix_idx];
     depth_map[current_pix_idx] = curr_pix_value;
@@ -539,7 +539,7 @@ __global__ void depth_smoothing_filter_w(float *depth_map_out, float *depth_map,
     const float filter_weights[5] = {1.0, 0.667, 0.4, 0.2, 0.1};
 
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int h = blockIdx.x / 4;
+    int h = current_pix_idx / width;
     int w = current_pix_idx % width;
     float curr_pix_value = depth_map[current_pix_idx];
     if (curr_pix_value != 0) {
@@ -573,7 +573,7 @@ __global__ void depth_smoothing_filter_h(float *depth_map_out, float *depth_map,
     const float filter_weights[5] = {1.0, 0.667, 0.4, 0.2, 0.1};
 
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int h = blockIdx.x / 4;
+    int h = current_pix_idx / width;
     int w = current_pix_idx % width;
     float curr_pix_value = depth_map[current_pix_idx];
     if (curr_pix_value != 0) {
@@ -612,7 +612,7 @@ __global__ void depth_median_filter_w(float *depth_map_out, float *depth_map, in
     // int filter_max_length = 1; //depth_filter_max_length[0]; // 1, 2
 
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int h = blockIdx.x / 4;
+    int h = current_pix_idx / width;
     int w = current_pix_idx % width;
     float curr_pix_value = depth_map[current_pix_idx];
     float mid_val = curr_pix_value;
@@ -630,7 +630,7 @@ __global__ void depth_median_filter_h(float *depth_map_out, float *depth_map, in
     int width = width_array[0];
 
     int current_pix_idx = threadIdx.x + blockIdx.x*blockDim.x;
-    int h = blockIdx.x / 4;
+    int h = current_pix_idx / width;
     int w = current_pix_idx % width;
     float curr_pix_value = depth_map[current_pix_idx];
     float mid_val = curr_pix_value;

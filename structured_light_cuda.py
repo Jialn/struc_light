@@ -36,6 +36,7 @@ roughly_projector_area_ratio_in_image = None    # the roughly prjector area in i
                                                 # if None, will be estimated from image automaticly
 phsift_pattern_period_per_pixel = 10.0  # normalize the index. porjected pattern res width is 1280; 7 graycode pattern = 2^7 = 128 phase shift periods; 1290/128=10 
 default_image_seq_start_index = 24      # in some datasets, (0, 24) are for pure gray code solutions 
+gpu_block_div_by_width = 4    # for image whose width is less than 4000. If image is larger, set it to 6 or 8.
 
 save_mid_res_for_visulize = False
 visulize_res = True
@@ -94,30 +95,30 @@ def gray_decode_cuda(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map, im
         gray_decode_hdr_cuda_kernel(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map,
             cuda.In(np.int32(image_num)),cuda.In(np.int32(height)),cuda.In(np.int32(width)),
             img_index,cuda.In(np.int32(unvalid_thres)),
-            block=(width//4, 1, 1), grid=(height*4, 1))
+            block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
     else:
         gray_decode_cuda_kernel(src_imgs, avg_thres_posi, avg_thres_nega, prj_valid_map,
             cuda.In(np.int32(image_num)),cuda.In(np.int32(height)),cuda.In(np.int32(width)),
             img_index,cuda.In(np.int32(unvalid_thres)),
-            block=(width//4, 1, 1), grid=(height*4, 1))
+            block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
 
 def phase_shift_decode_cuda(images_phsft_src, height,width, img_phase, img_index, phase_decoding_unvalid_thres, is_hdr_images):
     if is_hdr_images:
         phase_shift_decode_hdr_cuda_kernel(images_phsft_src,
             cuda.In(np.int32(height)),cuda.In(np.int32(width)),
             img_phase,img_index,cuda.In(np.int32(phase_decoding_unvalid_thres)),cuda.In(np.float32(phsift_pattern_period_per_pixel)),
-            block=(width//4, 1, 1), grid=(height*4, 1))
+            block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
     else:
         phase_shift_decode_cuda_kernel(images_phsft_src,
             cuda.In(np.int32(height)),cuda.In(np.int32(width)),
             img_phase,img_index,cuda.In(np.int32(phase_decoding_unvalid_thres)),cuda.In(np.float32(phsift_pattern_period_per_pixel)),
-            block=(width//4, 1, 1), grid=(height*4, 1))
+            block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
 
 def rectify_phase_and_belief_map_cuda(img_phase, belief_map, rectify_map_x, rectify_map_y, height,width, rectified_img_phase, rectified_belief_map, sub_pixel_map):
     rectify_phase_and_belief_map_cuda_kernel(img_phase, belief_map, rectify_map_x, rectify_map_y,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         rectified_img_phase, rectified_belief_map, sub_pixel_map,
-        block=(width//4, 1, 1), grid=(height*4, 1))
+        block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
 
 def gen_depth_from_index_matching_cuda(depth_map, height, width, img_index_left, img_index_right, baseline, dmap_base, fx, img_index_left_sub_px, img_index_right_sub_px, belief_map_left, belief_map_right, roughly_projector_area_ratio):
     gen_depth_from_index_matching_cuda_kernel(depth_map,
@@ -132,33 +133,33 @@ def optimize_dmap_using_sub_pixel_map_cuda(unoptimized_depth_map, depth_map, hei
     optimize_dmap_using_sub_pixel_map_cuda_kernel(unoptimized_depth_map,depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         img_index_left_sub_px,
-        block=(width//4, 1, 1), grid=(height*4, 1))
+        block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
 
 def flying_points_filter_cuda(depth_map, depth_map_raw, height, width, camera_kd_l, belief_map):
     flying_points_filter_cuda_kernel(depth_map, depth_map_raw,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(camera_kd_l), cuda.In(np.float32(flying_points_filter_checking_range)), cuda.In(np.int32(flying_points_filter_minmum_points_in_checking_range)), belief_map,
-        block=(width//4, 1, 1), grid=(height*4, 1))
+        block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
 
 def depth_smoothing_filter_cuda(depth_map_mid_res, depth_map, height, width, belief_map):
     depth_smoothing_filter_h_cuda_kernel(depth_map_mid_res, depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_smoothing_filter_max_length)), cuda.In(np.float32(depth_smoothing_filter_unconsis_thres)), belief_map,
-        block=(width//4, 1, 1), grid=(height*4, 1))
+        block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
     depth_smoothing_filter_w_cuda_kernel(depth_map, depth_map_mid_res,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_smoothing_filter_max_length)), cuda.In(np.float32(depth_smoothing_filter_unconsis_thres)), belief_map,
-        block=(width//4, 1, 1), grid=(height*4, 1))
+        block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
 
 def depth_median_filter_cuda(depth_map_mid_res, depth_map, height, width):
     depth_median_filter_h_cuda_kernel(depth_map_mid_res, depth_map,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_smoothing_filter_max_length)),
-        block=(width//4, 1, 1), grid=(height*4, 1))
+        block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
     depth_median_filter_w_cuda_kernel(depth_map, depth_map_mid_res,
         cuda.In(np.int32(height)), cuda.In(np.int32(width)),
         cuda.In(np.int32(depth_smoothing_filter_max_length)),
-        block=(width//4, 1, 1), grid=(height*4, 1))
+        block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
 
 def tv_filter(dedepth_map_mid_res, depth_map, height, width, iter=10):
     filter_lambda = 0.0
@@ -167,7 +168,7 @@ def tv_filter(dedepth_map_mid_res, depth_map, height, width, iter=10):
         tv_filter_one_iter_cuda_kernel(dedepth_map_mid_res, depth_map,
             cuda.In(np.int32(height)), cuda.In(np.int32(width)),
             cuda.In(np.float32(filter_lambda)),
-            block=(width//4, 1, 1), grid=(height*4, 1))
+            block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
     cuda.memcpy_dtod(depth_map, dedepth_map_mid_res, size=height*width*4)
 
 def anisotropic_filter(dedepth_map_mid_res, depth_map, height, width, iter=2):
@@ -177,7 +178,7 @@ def anisotropic_filter(dedepth_map_mid_res, depth_map, height, width, iter=2):
         anisotropic_filter_one_iter_cuda_kernel(dedepth_map_mid_res, depth_map,
             cuda.In(np.int32(height)), cuda.In(np.int32(width)),
             cuda.In(np.float32(filter_kappa)),
-            block=(width//4, 1, 1), grid=(height*4, 1))
+            block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
         # should copy every iteration for anisotropic_filter
         cuda.memcpy_dtod(depth_map, dedepth_map_mid_res, size=height*width*4)
 
@@ -271,13 +272,13 @@ def index_decoding_from_images(image_path, appendix, rectifier, is_bayer_color_i
     if is_bayer_color_image:
         start_time = time.time()
         convert_bayer(prj_area_posi_gpu, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
-                block=(width//4, 1, 1), grid=(height, 1))
+                block=(width//gpu_block_div_by_width, 1, 1), grid=(height, 1))
         convert_bayer(prj_area_nega_gpu, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
-            block=(width//4, 1, 1), grid=(height, 1))
+            block=(width//gpu_block_div_by_width, 1, 1), grid=(height, 1))
         convert_bayer(images_gray_src, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
-            block=(width//4, 1, 1), grid=(height*image_num_gray, 1))
+            block=(width//gpu_block_div_by_width, 1, 1), grid=(height*image_num_gray, 1))
         convert_bayer(images_phsft_src, cuda.In(np.int32(height)),cuda.In(np.int32(width)),
-            block=(width//4, 1, 1), grid=(height*image_num_phsft, 1))
+            block=(width//gpu_block_div_by_width, 1, 1), grid=(height*image_num_phsft, 1))
         print("demosac using gpu: %.3f s" % (time.time() - start_time))
 
     ### decoding
@@ -365,7 +366,7 @@ def run_stru_li_pipe(pattern_path, res_path, rectifier=None, images=None, is_bay
         else: depth_smoothing_filter_cuda(gpu_depth_map_filtered_mid_res, gpu_depth_map_filtered, height, width, belief_map_left)
         print("depth smothing filter: %.3f s" % (time.time() - start_time))
     # readout
-    convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//4, 1, 1), grid=(height*4, 1))
+    convert_dmap_to_mili_meter(gpu_depth_map_filtered, block=(width//gpu_block_div_by_width, 1, 1), grid=(height*gpu_block_div_by_width, 1))
     start_time = time.time()
     cuda.memcpy_dtoh(depth_map, gpu_depth_map_filtered)
     print("readout from gpu: %.3f s" % (time.time() - start_time))
