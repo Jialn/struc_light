@@ -351,9 +351,10 @@ def index_decoding_from_images(image_path, appendix, rectifier, res_path=None, i
         prj_area_posi, prj_area_nega = images[image_seq_start_index], images[image_seq_start_index+1]
         images_graycode = images[image_seq_start_index+2:image_seq_start_index+10] # gray code posi images
         images_phsft = images[image_seq_start_index+10:image_seq_start_index+14] # phase shift images
-    prj_valid_map = prj_area_posi - prj_area_nega
+    prj_valid_map = prj_area_posi.astype(np.int16) - prj_area_nega.astype(np.int16)
     if rectifier.remap_x_left_scaled is None: _ = rectifier.rectify_image(prj_area_posi, interpolation=cv2.INTER_NEAREST)  # to build the internal LUT map
     thres, prj_valid_map_bin = cv2.threshold(prj_valid_map, 1+phase_decoding_unvalid_thres//2, 255, cv2.THRESH_BINARY)
+    prj_valid_map_bin = prj_valid_map_bin.astype(np.uint8)
     if roughly_projector_area_ratio_in_image is None:
         total_pix, projector_area_pix = prj_valid_map_bin.nbytes, len(np.where(prj_valid_map_bin == 255)[0])
         roughly_projector_area_ratio_in_image = np.sqrt(projector_area_pix/total_pix)
