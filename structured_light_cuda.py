@@ -420,7 +420,16 @@ if __name__ == "__main__":
     np.savetxt(res_path + "/camera_kd.txt", camera_kp)
     if not save_mid_res_for_visulize:  # test again for speed of not inital case
         gray, depth_map_mm, camera_kp = run_stru_li_pipe(image_path, res_path, rectifier=rectifier)
-    
+
+    if save_mid_res_for_visulize:  # save rectify tmp image
+        visulize_idx = 0
+        left = cv2.imread(image_path + str(visulize_idx) + "_l.bmp", cv2.IMREAD_UNCHANGED)
+        left_rectified = rectifier.rectify_image(left)
+        cv2.imwrite(res_path + "/" + str(visulize_idx) + "_l_rectified.bmp", left_rectified)
+        right = cv2.imread(image_path + str(visulize_idx) + "_r.bmp", cv2.IMREAD_UNCHANGED)
+        right_rectified = rectifier.rectify_image(right, left=False)
+        cv2.imwrite(res_path + "/" + str(visulize_idx) + "_r_rectified.bmp", right_rectified)
+
     if os.path.exists(image_path + "depth_gt.exr"):
         gt_depth = cv2.imread(image_path + "depth_gt.exr", cv2.IMREAD_UNCHANGED)[:,:,0]
         gt_depth = gt_depth * 1000.0  # scale to mili-meter
