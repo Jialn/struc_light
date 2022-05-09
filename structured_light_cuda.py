@@ -3,6 +3,7 @@ Description:
 This program implements the structured light pipeline with graycode and phase shift pattern.
 """
 import os
+os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
 import cv2
 import time
 import numpy as np
@@ -38,7 +39,7 @@ phsift_pattern_period_per_pixel = 10.0  # normalize the index. porjected pattern
 default_image_seq_start_index = 24      # in some datasets, (0, 24) are for pure gray code solutions 
 gpu_block_div_by_width = 4    # for image whose width is less than 4000. If image is larger, set it to 6 or 8.
 
-save_mid_res_for_visulize = False
+save_mid_res_for_visulize = True
 visulize_res = True
 save_pointcloud = True                 # save point cloud for test when visulize_res is enabled
 
